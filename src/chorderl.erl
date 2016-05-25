@@ -11,7 +11,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, stop/0]).
+-export([start_link/1, stop/1]).
 -export([init/1, terminate/2, handle_cast/2, handle_info/2, code_change/3]).
 
 -define(Timeout, 1000).
@@ -19,22 +19,33 @@
 %% Exported Client Functions
 %% Operation & Maintenance API
 
-start_link(NodeID) ->
+start_link(random_id) ->
+  Name = generate_node_id(),
+  M = atom_to_binary(?MODULE, latin1),
+  NodeID = binary_to_atom(<<M/binary, "_", Name/binary>>, latin1),
   gen_server:start_link(
-    {local, ?MODULE},
+    {local, NodeID},
+    ?MODULE,
+    [NodeID, nil],
+    []
+  );
+start_link(Name) ->
+  M = atom_to_binary(?MODULE, latin1),
+  NodeID = binary_to_atom(<<M/binary, "_", Name/binary>>, latin1),
+  gen_server:start_link(
+    {local, NodeID},
     ?MODULE,
     [NodeID, nil],
     []
   ).
 
-stop() ->
-  gen_server:cast(?MODULE, stop).
+stop(NodeID) ->
+  gen_server:cast(NodeID, stop).
 
 %% Callback Functions
 
 init([NodeID, Peer]) ->
   LoopData = #{node_id => NodeID, predecessor => nil, successor => nil},
-  NodeID = generate_node_id(),
   {ok, Successor} = connect(NodeID, Peer),
   {ok, LoopData#{successor := Successor}}.
 
@@ -77,6 +88,8 @@ handle_cast({stabilize}, LoopData) ->
   {noreply, LoopData}.
 
 handle_info(timeout, LoopData) ->
+  {noreply, LoopData};
+handle_info(_Other, LoopData) ->
   {noreply, LoopData}.
 
 code_change(_OldVsn, LoopData, _Extra) ->

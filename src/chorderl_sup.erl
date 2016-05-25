@@ -28,7 +28,7 @@ start_link() ->
 
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
 init([]) ->
-    Child = {srv, {chorderl, start_link, []},
+    Child = {srv, {chorderl, start_link, [random_id]},
         permanent, 2000, worker, [chorderl]},
     {ok, { {one_for_all, 0, 1}, [Child]} }.
 
