@@ -11,7 +11,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, stop/1]).
+-export([start_link/1, start_link/2, stop/1]).
 -export([init/1, terminate/2, handle_cast/2, handle_info/2, code_change/3]).
 
 -define(Timeout, 1000).
@@ -19,23 +19,26 @@
 %% Exported Client Functions
 %% Operation & Maintenance API
 
-start_link(random_id) ->
+start_link(Name) ->
+  start_link(Name, nil).
+
+start_link(random_id, Peer) ->
   Name = generate_node_id(),
   M = atom_to_binary(?MODULE, latin1),
   NodeID = binary_to_atom(<<M/binary, "_", Name/binary>>, latin1),
   gen_server:start_link(
     {local, NodeID},
     ?MODULE,
-    [NodeID, nil],
+    [NodeID, Peer],
     []
   );
-start_link(Name) ->
+start_link(Name, Peer) ->
   M = atom_to_binary(?MODULE, latin1),
   NodeID = binary_to_atom(<<M/binary, "_", Name/binary>>, latin1),
   gen_server:start_link(
     {local, NodeID},
     ?MODULE,
-    [NodeID, nil],
+    [NodeID, Peer],
     []
   ).
 
@@ -149,13 +152,13 @@ notify({Nkey, Npid}, NodeID, Predecessor) ->
   end.
 
 connect(NodeID, nil) ->
-  {ok, {NodeID, self()}}; % set our Successesor to ourselves
+  {ok, {NodeID, self()}}; % set our Successesor to ourselves {NodeID, self()}}
 connect(_NodeID, Peer) ->
   Qref = make_ref(),
   Peer ! {key, Qref, self()},
   receive
     {Qref, Skey} ->
-      {ok, {Skey, Peer}} % set our Successesor to Peer
+      {ok, {Skey, Peer}} % set our Successesor to {Skey, Peer}
   after ?Timeout ->
     io:format("Time out: no response~n",[]),
     {error, timeout}
