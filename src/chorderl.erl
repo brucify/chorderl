@@ -48,9 +48,10 @@ stop(NodeID) ->
 %% Callback Functions
 
 init([NodeID, Peer]) ->
-  LoopData = #{node_id => NodeID, predecessor => nil, successor => nil},
-  {ok, Successor} = connect(NodeID, Peer),
-  {ok, LoopData#{successor := Successor}}.
+  {ok, Successor} = connect(NodeID, Peer), % Ask Peer for our Successor
+  Store = chorderl_store:create(NodeID),
+  LoopData = #{node_id => NodeID, predecessor => nil, successor => Successor, store => Store},
+  {ok, LoopData}.
 
 terminate(_Reason, _LoopData) ->
   ok.
@@ -88,6 +89,27 @@ handle_cast({status, Pred}, LoopData) ->
 handle_cast({stabilize}, LoopData) ->
   Successor = maps:get(LoopData, successor),
   stabilize(Successor), % ask our successor about its predecessor
+  {noreply, LoopData};
+
+%% todo
+handle_cast({add, Key, Value, Qref, Client}, LoopData) ->
+  NodeID = maps:get(LoopData, node_id),
+  Successor = maps:get(LoopData, successor),
+  Predecessor = maps:get(LoopData, predecessor),
+  Store = maps:get(LoopData, store),
+
+  Added = add(Key, Value, Qref, Client,
+    NodeID, Predecessor, Successor, Store),
+  {noreply, LoopData#{store := Added}};
+
+handle_cast({lookup, Key, Qref, Client}, LoopData) ->
+  NodeID = maps:get(LoopData, node_id),
+  Successor = maps:get(LoopData, successor),
+  Predecessor = maps:get(LoopData, predecessor),
+  Store = maps:get(LoopData, store),
+
+  lookup(Key, Qref, Client,
+    NodeID, Predecessor, Successor, Store),
   {noreply, LoopData}.
 
 handle_info(timeout, LoopData) ->
@@ -120,7 +142,7 @@ stabilize(Pred, NodeID, Successor) ->
       Spid ! {notify, {NodeID, self()}},
       Successor;
     {Xkey, Xpid} -> % Our Successor's predecessor is some other node X (Xkey)
-      case is_between(Xkey, NodeID, Skey) of
+      case chorderl_utils:is_between(Xkey, NodeID, Skey) of
         true -> % Our Successor's predecessor (Xkey) is between us and Successor (NodeId and Skey)
           Xpid ! {notify, {NodeID, self()}},
           Pred;
@@ -143,7 +165,7 @@ notify({Nkey, Npid}, NodeID, Predecessor) ->
     nil -> % Our Predecessor is nil
       {Nkey, Npid};
     {Pkey, _} ->
-      case is_between(Nkey, Pkey, NodeID) of
+      case chorderl_utils:is_between(Nkey, Pkey, NodeID) of
         true -> % New node (Xkey) is between us and our Predecessor (NodeId and Pkey)
           {Nkey, Npid};
         false -> % New node (Xkey) is not between us and our Predecessor (NodeId and Pkey)
@@ -158,17 +180,30 @@ connect(_NodeID, Peer) ->
   Peer ! {key, Qref, self()},
   receive
     {Qref, Skey} ->
-      {ok, {Skey, Peer}} % set our Successesor to {Skey, Peer}
+      {ok, {Skey, Peer}} % set our Successesor to {Skey, Peer} todo: always Peer returned ???
   after ?Timeout ->
     io:format("Time out: no response~n",[]),
     {error, timeout}
   end.
 
-is_between(KeyX, Key1, Key2) when (Key1 < KeyX) and (KeyX < Key2) ->
-  true;
-is_between(KeyX, Key1, Key2) when (Key2 < KeyX) and (KeyX < Key1) ->
-  true;
-is_between(_KeyX, _Key1, _Key2) ->
-  false.
+add(Key, Value, Qref, Client,
+    NodeID, {Pkey, _}, {_, Spid}, Store) ->
+  case (Pkey < Key) and (Key =< NodeID) of % Key is within (Pkey, NodeID], assuming predecessor always smaller and successor always bigger
+    true -> % We (NodeID) are responsible for Key
+      Client ! {Qref, ok},
+      Added = chorderl_store:add(Key, Value, Store),
+      Added;
+    false -> % NodeID is not responsible for Key
+      Spid ! {add, Key, Value, Qref, Client}, % forward it to Spid instead
+      Store
+  end.
 
-
+lookup(Key, Qref, Client,
+    NodeID, {Pkey, _}, {_, Spid}, Store) ->
+  case (Pkey < Key) and (Key =< NodeID) of
+    true -> % We (NodeID) are responsible for Key
+      Result = chorderl_store:lookup(Key, Store),
+      Client ! {Qref, Result};
+    false -> % NodeID is not responsible for Key
+      Spid ! {lookup, Key, Qref, Client}
+  end.
