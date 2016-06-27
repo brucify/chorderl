@@ -12,15 +12,17 @@
 -export([create/1, add/3, lookup/2, split/3, merge/2]).
 
 create(NodeID) ->
-  StoreID = ets:new(NodeID, [set]),
+  StoreID = ets:new(NodeID, [ordered_set]),
   StoreID.
 
 add(Key, Value, StoreID) ->
   ets:insert(StoreID, {Key, Value}).
 
 lookup(Key, StoreID) ->
-  [{Key, Value}] = ets:lookup(StoreID, Key),
-  Value.
+  case ets:lookup(StoreID, Key) of
+    [{Key, Value}] -> Value;
+    _ -> []
+  end.
 
 split(From, To, StoreID) ->
   ok.

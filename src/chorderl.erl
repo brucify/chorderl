@@ -11,7 +11,9 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, start_link/2, stop/1]).
+-export([join/1, join/2, stop/1]).
+-export([join/2, fix_fingers/0, cast_add/5, cast_get_key/2, cast_notify/2, cast_request/2, cast_send_status/2, cast_stabilize/1, cast_lookup/4]).
+-export([registered/0]).
 -export([init/1, terminate/2, handle_cast/2, handle_info/2, code_change/3]).
 
 -define(Timeout, 1000).
@@ -19,24 +21,22 @@
 %% Exported Client Functions
 %% Operation & Maintenance API
 
-start_link(Name) ->
-  start_link(Name, nil).
 
-start_link(random_id, Peer) ->
-  Name = generate_node_id(),
+join(Key) ->
+  join(Key, nil).
+
+%% 1. Ask Peer: who's my Successor?
+%% 2. Wait for Peer's answer: It's X
+%% 3. Notify X that its new Predecessor is us
+%% 4. X verifies and decides if it sets Predecessor to us
+% Key: <<"the key">>
+% Peer: <0.999.0>
+join(Key, Peer) ->
+  NodeID = generate_node_id(Key),
   M = atom_to_binary(?MODULE, latin1),
-  NodeID = binary_to_atom(<<M/binary, "_", Name/binary>>, latin1),
+  ProcName = binary_to_atom(<<M/binary, "_", NodeID/binary>>, latin1),
   gen_server:start_link(
-    {local, NodeID},
-    ?MODULE,
-    [NodeID, Peer],
-    []
-  );
-start_link(Name, Peer) ->
-  M = atom_to_binary(?MODULE, latin1),
-  NodeID = binary_to_atom(<<M/binary, "_", Name/binary>>, latin1),
-  gen_server:start_link(
-    {local, NodeID},
+    {local, ProcName},
     ?MODULE,
     [NodeID, Peer],
     []
@@ -45,11 +45,53 @@ start_link(Name, Peer) ->
 stop(NodeID) ->
   gen_server:cast(NodeID, stop).
 
+fix_fingers() ->
+  ok.
+
+%% Request NodeID
+cast_get_key(Pid, Requester) ->
+  gen_server:cast(Pid, {key, make_ref(), Requester}).
+
+%% Set new Predecessor
+cast_notify(Pid, New) ->
+  gen_server:cast(Pid, {notify, New}).
+
+%% Request Predecessor
+cast_request(Pid, Peer) ->
+  gen_server:cast(Pid, {request, Peer}).
+
+%% Send current Predecessor
+cast_send_status(Pid, Pred) ->
+  gen_server:cast(Pid, {status, Pred}).
+
+%% Start stabilization
+cast_stabilize(Pid) ->
+  gen_server:cast(Pid, {stabilize}).
+
+%% Save a Key/Value pair
+cast_add(Pid, Key, Value, Qref, Client) ->
+  gen_server:cast(Pid, {add, Key, Value, Qref, Client}).
+
+%% Look up a Key
+cast_lookup(Pid, Key, Qref, Client) ->
+  gen_server:cast(Pid, {lookup, Key, Qref, Client}).
+
+%% List processes starting with "chorderl..." in erlang:registered()
+registered() ->
+  look_for_chorderl(lists:map(fun(X)-> atom_to_list(X) end, erlang:registered()), []).
+
+look_for_chorderl([], Res) ->
+  Res;
+look_for_chorderl([ [99,104,111,114,100,101,114,108 | Rest] | T], Res) ->
+  look_for_chorderl(T, [list_to_atom([99,104,111,114,100,101,114,108 | Rest]) | Res]); %matching "chorderl..."
+look_for_chorderl([_ | T], Res) ->
+  look_for_chorderl(T, Res).
+
 %% Callback Functions
 
 init([NodeID, Peer]) ->
   {ok, Successor} = connect(NodeID, Peer), % Ask Peer for our Successor
-  Store = chorderl_store:create(NodeID),
+  Store = chorderl_store:create(binary_to_atom(NodeID, latin1)),
   LoopData = #{node_id => NodeID, predecessor => nil, successor => Successor, store => Store},
   {ok, LoopData}.
 
@@ -61,59 +103,66 @@ handle_cast(stop, LoopData) ->
 
 % Peer needs to know our key
 handle_cast({key, Qref, Peer}, LoopData) ->
-  NodeID = maps:get(LoopData, node_id),
+  NodeID = maps:get(node_id, LoopData),
   Peer ! {Qref, NodeID},
   {noreply, LoopData};
 
 % New thinks it might be our predecessor
 handle_cast({notify, New}, LoopData) ->
-  NodeID = maps:get(LoopData, node_id),
-  Predecessor = maps:get(LoopData, predecessor),
+  NodeID = maps:get(node_id, LoopData),
+  Predecessor = maps:get(predecessor, LoopData),
   Pred = notify(New, NodeID, Predecessor), % find out if New can be our new predecessor
   {noreply, LoopData#{predecessor := Pred}};
 
 % Peer needs to know our Predecessor
 handle_cast({request, Peer}, LoopData) ->
-  Predecessor = maps:get(LoopData, predecessor),
+  Predecessor = maps:get(predecessor, LoopData),
   request(Peer, Predecessor),
   {noreply, LoopData};
 
 % Our successor tell us about its predecessor Pred
 handle_cast({status, Pred}, LoopData) ->
-  NodeID = maps:get(LoopData, node_id),
-  Successor = maps:get(LoopData, successor),
+  NodeID = maps:get(node_id, LoopData),
+  Successor = maps:get(successor, LoopData),
   Succ = stabilize(Pred, NodeID, Successor), % find out if Pred can be our new successor
   {noreply, LoopData#{successor := Succ}}; % update our successor
 
-% called periodically, verifies our Successor
+% called periodically, verifies our Successor todo: remove
 handle_cast({stabilize}, LoopData) ->
-  Successor = maps:get(LoopData, successor),
+  Successor = maps:get(successor, LoopData),
   stabilize(Successor), % ask our successor about its predecessor
   {noreply, LoopData};
 
-%% todo
+%% A node will take care of all the keys it is responsible for. If not responsible, forward it to our Successor
 handle_cast({add, Key, Value, Qref, Client}, LoopData) ->
-  NodeID = maps:get(LoopData, node_id),
-  Successor = maps:get(LoopData, successor),
-  Predecessor = maps:get(LoopData, predecessor),
-  Store = maps:get(LoopData, store),
+  NodeID = maps:get(node_id, LoopData),
+  Successor = maps:get(successor, LoopData),
+  Predecessor = maps:get(predecessor, LoopData),
+  Store = maps:get(store, LoopData),
 
   Added = add(Key, Value, Qref, Client,
     NodeID, Predecessor, Successor, Store),
-  {noreply, LoopData#{store := Added}};
+  {noreply, LoopData#{store := Added}}; % todo change to call ???
 
 handle_cast({lookup, Key, Qref, Client}, LoopData) ->
-  NodeID = maps:get(LoopData, node_id),
-  Successor = maps:get(LoopData, successor),
-  Predecessor = maps:get(LoopData, predecessor),
-  Store = maps:get(LoopData, store),
+  NodeID = maps:get(node_id, LoopData),
+  Successor = maps:get(successor, LoopData),
+  Predecessor = maps:get(predecessor, LoopData),
+  Store = maps:get(store, LoopData),
 
   lookup(Key, Qref, Client,
     NodeID, Predecessor, Successor, Store),
+  {noreply, LoopData}; % todo change
+
+handle_cast(_, LoopData) ->
   {noreply, LoopData}.
 
+% called periodically, verifies our Successor
 handle_info(timeout, LoopData) ->
+  Successor = maps:get(successor, LoopData),
+  stabilize(Successor), %% todo: replace with external process timer triggering cast_stabilize(Pid)
   {noreply, LoopData};
+%% todo handle_info(({nodeup, _Node})
 handle_info(_Other, LoopData) ->
   {noreply, LoopData}.
 
@@ -122,11 +171,13 @@ code_change(_OldVsn, LoopData, _Extra) ->
 
 %% Customer Services API
 
-generate_node_id() ->
-  crypto:hash(sha, float_to_list(random:uniform())).
+generate_node_id(random_id) ->
+  crypto:hash(sha, float_to_list(random:uniform()));
+generate_node_id(Key) ->
+  crypto:hash(sha, Key).
 
 stabilize({_, Spid}) ->
-  Spid ! {request, self()}.
+  cast_request(Spid, self()).
 
 % A basic stabilization protocol is used to keep nodes' successors up to date
 % Asks Successor for Pred's successor, and decide whether Pred should be NodeID's successor instead
@@ -134,20 +185,20 @@ stabilize(Pred, NodeID, Successor) ->
   {Skey, Spid} = Successor,
   case Pred of
     nil -> % Our Successor's predecessor is nil
-      Spid ! {notify, {NodeID, self()}},
+      cast_notify(Spid, {NodeID, self()}),
       Successor;
     {NodeID, _} -> % Our Successor's predecessor is us (NodeID)
       Successor;
     {Skey, _} -> % Our Successor's predecessor is itself (Skey)
-      Spid ! {notify, {NodeID, self()}},
+      cast_notify(Spid, {NodeID, self()}),
       Successor;
     {Xkey, Xpid} -> % Our Successor's predecessor is some other node X (Xkey)
       case chorderl_utils:is_between(Xkey, NodeID, Skey) of
         true -> % Our Successor's predecessor (Xkey) is between us and Successor (NodeId and Skey)
-          Xpid ! {notify, {NodeID, self()}},
+          cast_notify(Xpid, {NodeID, self()}),
           Pred;
         false -> % Our Successor's predecessor (Xkey) is not between us and Successor (NodeId and Skey)
-          Spid ! {notify, {NodeID, self()}},
+          cast_notify(Spid, {NodeID, self()}),
           Successor
       end
   end.
@@ -155,9 +206,9 @@ stabilize(Pred, NodeID, Successor) ->
 request(Peer, Predecessor) ->
   case Predecessor of
     nil ->
-      Peer ! {status, nil};
+      cast_send_status(Peer, nil);
     {Pkey, Ppid} ->
-      Peer ! {status, {Pkey, Ppid}}
+      cast_send_status(Peer, {Pkey, Ppid})
   end.
 
 notify({Nkey, Npid}, NodeID, Predecessor) ->
@@ -177,7 +228,7 @@ connect(NodeID, nil) ->
   {ok, {NodeID, self()}}; % set our Successesor to ourselves {NodeID, self()}}
 connect(_NodeID, Peer) ->
   Qref = make_ref(),
-  Peer ! {key, Qref, self()},
+  cast_get_key(Peer, self()),
   receive
     {Qref, Skey} ->
       {ok, {Skey, Peer}} % set our Successesor to {Skey, Peer} todo: always Peer returned ???
@@ -194,16 +245,22 @@ add(Key, Value, Qref, Client,
       Added = chorderl_store:add(Key, Value, Store),
       Added;
     false -> % NodeID is not responsible for Key
-      Spid ! {add, Key, Value, Qref, Client}, % forward it to Spid instead
+      cast_add(Spid, Key, Value, Qref, Client),  % forward it to Spid instead
       Store
   end.
 
 lookup(Key, Qref, Client,
-    NodeID, {Pkey, _}, {_, Spid}, Store) ->
-  case (Pkey < Key) and (Key =< NodeID) of
-    true -> % We (NodeID) are responsible for Key
+    NodeID, Predecessor, {_, Spid}, Store) ->
+  case Predecessor of
+    nil ->
       Result = chorderl_store:lookup(Key, Store),
       Client ! {Qref, Result};
-    false -> % NodeID is not responsible for Key
-      Spid ! {lookup, Key, Qref, Client}
+    {Pkey, _} ->
+      case (Pkey < Key) and (Key =< NodeID) of
+        true -> % We (NodeID) are responsible for Key
+          Result = chorderl_store:lookup(Key, Store),
+          Client ! {Qref, Result};
+        false -> % NodeID is not responsible for Key
+          cast_lookup(Spid, Key, Qref, Client) % forward the lookup message to Spid instead
+      end
   end.
