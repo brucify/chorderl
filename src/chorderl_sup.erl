@@ -28,7 +28,7 @@ start_link() ->
 
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
 init([]) ->
-    Child = {srv, {chorderl, start_link, [random_id]},
+    Child = {srv, {chorderl, join, [random_id]}, % chorderl:join(random_id) || chorderl:join(<<"127.0.0.1">>)
         permanent, 2000, worker, [chorderl]},
     {ok, { {one_for_all, 0, 1}, [Child]} }.
 

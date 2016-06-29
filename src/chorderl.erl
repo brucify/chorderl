@@ -12,7 +12,7 @@
 
 %% API
 -export([join/1, join/2, stop/1]).
--export([join/2, fix_fingers/0, cast_add/5, cast_get_key/2, cast_notify/2, cast_request/2, cast_send_status/2, cast_stabilize/1, cast_lookup/4]).
+-export([fix_fingers/0, cast_add/5, cast_get_key/3, cast_notify/2, cast_request_predecessor/2, cast_send_predecessor/2, cast_stabilize/1, cast_lookup/4]).
 -export([registered/0]).
 -export([init/1, terminate/2, handle_cast/2, handle_info/2, code_change/3]).
 
@@ -32,9 +32,9 @@ join(Key) ->
 % Key: <<"the key">>
 % Peer: <0.999.0>
 join(Key, Peer) ->
-  NodeID = generate_node_id(Key),
+  NodeID = chorderl_utils:generate_node_id(Key),
   M = atom_to_binary(?MODULE, latin1),
-  ProcName = binary_to_atom(<<M/binary, "_", NodeID/binary>>, latin1),
+  ProcName = binary_to_atom(<<M/binary, "_", NodeID/binary>>, latin1), % e.g. 'chorderl_ì%KÅ\205\021Î¿#}qÆ\034\016ìâ´quX'
   gen_server:start_link(
     {local, ProcName},
     ?MODULE,
@@ -49,19 +49,19 @@ fix_fingers() ->
   ok.
 
 %% Request NodeID
-cast_get_key(Pid, Requester) ->
-  gen_server:cast(Pid, {key, make_ref(), Requester}).
+cast_get_key(Pid, Qref, Requester) ->
+  gen_server:cast(Pid, {key, Qref, Requester}).
 
 %% Set new Predecessor
 cast_notify(Pid, New) ->
   gen_server:cast(Pid, {notify, New}).
 
 %% Request Predecessor
-cast_request(Pid, Peer) ->
-  gen_server:cast(Pid, {request, Peer}).
+cast_request_predecessor(Pid, Requester) ->
+  gen_server:cast(Pid, {request, Requester}).
 
 %% Send current Predecessor
-cast_send_status(Pid, Pred) ->
+cast_send_predecessor(Pid, Pred) ->
   gen_server:cast(Pid, {status, Pred}).
 
 %% Start stabilization
@@ -76,16 +76,8 @@ cast_add(Pid, Key, Value, Qref, Client) ->
 cast_lookup(Pid, Key, Qref, Client) ->
   gen_server:cast(Pid, {lookup, Key, Qref, Client}).
 
-%% List processes starting with "chorderl..." in erlang:registered()
 registered() ->
-  look_for_chorderl(lists:map(fun(X)-> atom_to_list(X) end, erlang:registered()), []).
-
-look_for_chorderl([], Res) ->
-  Res;
-look_for_chorderl([ [99,104,111,114,100,101,114,108 | Rest] | T], Res) ->
-  look_for_chorderl(T, [list_to_atom([99,104,111,114,100,101,114,108 | Rest]) | Res]); %matching "chorderl..."
-look_for_chorderl([_ | T], Res) ->
-  look_for_chorderl(T, Res).
+  chorderl_utils:registered().
 
 %% Callback Functions
 
@@ -102,9 +94,9 @@ handle_cast(stop, LoopData) ->
   {stop, normal, LoopData};
 
 % Peer needs to know our key
-handle_cast({key, Qref, Peer}, LoopData) ->
+handle_cast({key, Qref, From}, LoopData) ->
   NodeID = maps:get(node_id, LoopData),
-  Peer ! {Qref, NodeID},
+  From ! {Qref, NodeID},
   {noreply, LoopData};
 
 % New thinks it might be our predecessor
@@ -115,9 +107,9 @@ handle_cast({notify, New}, LoopData) ->
   {noreply, LoopData#{predecessor := Pred}};
 
 % Peer needs to know our Predecessor
-handle_cast({request, Peer}, LoopData) ->
+handle_cast({request, Requester}, LoopData) ->
   Predecessor = maps:get(predecessor, LoopData),
-  request(Peer, Predecessor),
+  request(Requester, Predecessor),
   {noreply, LoopData};
 
 % Our successor tell us about its predecessor Pred
@@ -171,13 +163,8 @@ code_change(_OldVsn, LoopData, _Extra) ->
 
 %% Customer Services API
 
-generate_node_id(random_id) ->
-  crypto:hash(sha, float_to_list(random:uniform()));
-generate_node_id(Key) ->
-  crypto:hash(sha, Key).
-
 stabilize({_, Spid}) ->
-  cast_request(Spid, self()).
+  cast_request_predecessor(Spid, self()).
 
 % A basic stabilization protocol is used to keep nodes' successors up to date
 % Asks Successor for Pred's successor, and decide whether Pred should be NodeID's successor instead
@@ -203,12 +190,12 @@ stabilize(Pred, NodeID, Successor) ->
       end
   end.
 
-request(Peer, Predecessor) ->
+request(Requester, Predecessor) ->
   case Predecessor of
     nil ->
-      cast_send_status(Peer, nil);
+      cast_send_predecessor(Requester, nil);
     {Pkey, Ppid} ->
-      cast_send_status(Peer, {Pkey, Ppid})
+      cast_send_predecessor(Requester, {Pkey, Ppid})
   end.
 
 notify({Nkey, Npid}, NodeID, Predecessor) ->
@@ -228,9 +215,9 @@ connect(NodeID, nil) ->
   {ok, {NodeID, self()}}; % set our Successesor to ourselves {NodeID, self()}}
 connect(_NodeID, Peer) ->
   Qref = make_ref(),
-  cast_get_key(Peer, self()),
+  cast_get_key(Peer, Qref, self()),
   receive
-    {Qref, Skey} ->
+    {Qref, Skey} -> % what do you receive??? todo
       {ok, {Skey, Peer}} % set our Successesor to {Skey, Peer} todo: always Peer returned ???
   after ?Timeout ->
     io:format("Time out: no response~n",[]),
