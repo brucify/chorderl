@@ -13,26 +13,57 @@
 %% API
 -export([]).
 
-%% Join as 127.0.0.1
-join_test_() ->
-  IP1 = <<"127.0.0.1">>,
-  IP2 = <<"127.0.0.2">>,
-  NodeID1 = chorderl_utils:generate_node_id(IP1),
-  ProcName1 = binary_to_atom(<<"chorderl_", NodeID1/binary>>, latin1),
+-define(IP1, <<"127.0.0.1">>).
+-define(IP2, <<"127.0.0.2">>).
+-define(IP3, <<"127.0.0.3">>).
+-define(NodeID1, (chorderl_utils:generate_node_id(?IP1))).
+-define(NodeID2, (chorderl_utils:generate_node_id(?IP2))).
+-define(NodeID3, (chorderl_utils:generate_node_id(?IP3))).
+-define(ProcName1, (binary_to_atom(<<"chorderl_", ?NodeID1/binary>>, latin1))).
+-define(ProcName2, (binary_to_atom(<<"chorderl_", ?NodeID2/binary>>, latin1))).
+-define(ProcName3, (binary_to_atom(<<"chorderl_", ?NodeID3/binary>>, latin1))).
+
+main_test_() ->
+  NodeID1 = ?NodeID1,
+  NodeID2 = ?NodeID2,
+  NodeID3 = ?NodeID3,
 
   {inorder,
     [
       ?_assertEqual([], chorderl:registered() ),
-      ?_assertMatch({ok, _Pid}, chorderl:join(IP1)),
-      ?_assertEqual(NodeID1, cast_get_key(ProcName1)),
-      ?_assertEqual([ProcName1], chorderl:registered()),
-      ?_assertMatch({ok, _Pid}, chorderl:join(IP2, ProcName1))
+      ?_assertMatch({ok, _Pid}, chorderl:join(?IP1)),
+      ?_assertEqual(?NodeID1, cast_query_key(?ProcName1)),
+      ?_assertEqual([?ProcName1], chorderl:registered()),
+
+      ?_assertMatch({ok, _Pid}, chorderl:join(?IP2, ?ProcName1)),
+
+      ?_assertMatch(ok, chorderl:cast_stabilize(?ProcName2)),
+      ?_assertMatch(ok, chorderl:cast_stabilize(?ProcName1)),
+
+      ?_assertMatch({NodeID2, _}, cast_query_predecessor(?ProcName1)),
+      ?_assertMatch({NodeID2, _}, cast_query_successor(?ProcName1)),
+      ?_assertMatch(NodeID1, cast_query_predecessor(?ProcName2)),
+      ?_assertMatch({NodeID1, _}, cast_query_successor(?ProcName2)),
+
+      ?_assertMatch({ok, _Pid}, chorderl:join(?IP3, ?ProcName2)),
+
+      ?_assertMatch(ok, chorderl:cast_stabilize(?ProcName3)),
+      ?_assertMatch(ok, chorderl:cast_stabilize(?ProcName2)),
+      ?_assertMatch(ok, chorderl:cast_stabilize(?ProcName1)),
+
+      ?_assertMatch({NodeID3, _}, cast_query_predecessor(?ProcName1)),
+      ?_assertMatch({NodeID2, _}, cast_query_successor(?ProcName1)),
+      ?_assertMatch({NodeID1, _}, cast_query_predecessor(?ProcName2)),
+      ?_assertMatch({NodeID3, _}, cast_query_successor(?ProcName2)),
+      ?_assertMatch(nil, cast_query_predecessor(?ProcName3)),
+      ?_assertMatch({NodeID1, _}, cast_query_successor(?ProcName3))
+
     ]
   }.
 
-cast_get_key(ProcName) ->
+cast_query_key(ProcName) ->
   Qref = make_ref(),
-  chorderl:cast_get_key(ProcName, Qref, self()),
+  chorderl:cast_query_key(ProcName, Qref, self()),
   receive
     {Qref, NodeID} ->
       NodeID
@@ -41,5 +72,23 @@ cast_get_key(ProcName) ->
     {error, timeout}
   end.
 
-join_second_node() ->
-  chorderl:join(<<"127.0.0.2">>, whereis('chorderl_K\204±[ÿnåyaRIZ#\016Eã×éGÙ')).
+cast_query_predecessor(ProcName) ->
+  chorderl:cast_query_predecessor(ProcName, self()),
+  receive
+    {'$gen_cast', {status_predecessor, Pred}} ->
+      Pred
+  after 1000 ->
+    io:format("Time out: no response~n",[]),
+    {error, timeout}
+  end.
+
+cast_query_successor(ProcName) ->
+  Qref = make_ref(),
+  chorderl:cast_query_successor(ProcName, Qref, self()),
+  receive
+    {Qref, Succ} ->
+      Succ
+  after 1000 ->
+    io:format("Time out: no response~n",[]),
+    {error, timeout}
+  end.

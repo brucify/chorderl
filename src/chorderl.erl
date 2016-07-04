@@ -12,7 +12,10 @@
 
 %% API
 -export([join/1, join/2, stop/1]).
--export([fix_fingers/0, cast_add/5, cast_get_key/3, cast_notify/2, cast_request_predecessor/2, cast_send_predecessor/2, cast_stabilize/1, cast_lookup/4]).
+-export([fix_fingers/0]).
+-export([cast_add/5, cast_notify/2, cast_stabilize/1, cast_lookup/4]).
+-export([cast_query_key/3, cast_query_predecessor/2, cast_query_successor/3]).
+-export([cast_send_predecessor/2, cast_find_successor/3, cast_find_predecessor/3]).
 -export([registered/0]).
 -export([init/1, terminate/2, handle_cast/2, handle_info/2, code_change/3]).
 
@@ -27,14 +30,17 @@ join(Key) ->
 
 %% 1. Ask Peer: who's my Successor?
 %% 2. Wait for Peer's answer: It's X
-%% 3. Notify X that its new Predecessor is us
+%% 2.1 Peer checks: NewID's Predecessor is Y
+%% 2.2 Peer asks Y: who's your Successor?
+%% 2.3 Y says: it's X
+%% 3. NewID notifies X that its new Predecessor is us
 %% 4. X verifies and decides if it sets Predecessor to us
 % Key: <<"the key">>
 % Peer: <0.999.0>
 join(Key, Peer) ->
   NodeID = chorderl_utils:generate_node_id(Key),
-  M = atom_to_binary(?MODULE, latin1),
-  ProcName = binary_to_atom(<<M/binary, "_", NodeID/binary>>, latin1), % e.g. 'chorderl_ì%KÅ\205\021Î¿#}qÆ\034\016ìâ´quX'
+  Module = atom_to_binary(?MODULE, latin1),
+  ProcName = binary_to_atom(<<Module/binary, "_", NodeID/binary>>, latin1), % e.g. 'chorderl_ì%KÅ\205\021Î¿#}qÆ\034\016ìâ´quX'
   gen_server:start_link(
     {local, ProcName},
     ?MODULE,
@@ -48,21 +54,34 @@ stop(NodeID) ->
 fix_fingers() ->
   ok.
 
-%% Request NodeID
-cast_get_key(Pid, Qref, Requester) ->
-  gen_server:cast(Pid, {key, Qref, Requester}).
-
 %% Set new Predecessor
 cast_notify(Pid, New) ->
   gen_server:cast(Pid, {notify, New}).
 
-%% Request Predecessor
-cast_request_predecessor(Pid, Requester) ->
-  gen_server:cast(Pid, {request, Requester}).
+%% Request NodeID
+cast_query_key(Pid, Qref, From) ->
+  gen_server:cast(Pid, {query_key, Qref, From}).
+
+%% Check who is Predecessor of Pid
+cast_query_predecessor(Pid, From) ->
+  %lager:info("gen_server casting ~p", [lager:pr({Pid, From}, ?MODULE)]),
+  gen_server:cast(Pid, {query_predecessor, From}).
+
+%% Check who is Successor of Pid. NewNode needs to know
+cast_query_successor(Pid, Qref, From) ->
+  gen_server:cast(Pid, {query_successor, Qref, From}).
+
+% Request Successor of From
+cast_find_successor(Pid, Qref, {NodeID, From}) ->
+  gen_server:cast(Pid, {find_successor, Qref, {NodeID, From}}).
+
+% Request Predecessor of From
+cast_find_predecessor(Pid, Qref, {NodeID, From}) ->
+  gen_server:cast(Pid, {find_predecessor, Qref, {NodeID, From}}).
 
 %% Send current Predecessor
 cast_send_predecessor(Pid, Pred) ->
-  gen_server:cast(Pid, {status, Pred}).
+  gen_server:cast(Pid, {status_predecessor, Pred}).
 
 %% Start stabilization
 cast_stabilize(Pid) ->
@@ -81,10 +100,17 @@ registered() ->
 
 %% Callback Functions
 
+%% 1. Get successor
+%% 2. Get predecessor
+%% 3. Create store
 init([NodeID, Peer]) ->
   {ok, Successor} = connect(NodeID, Peer), % Ask Peer for our Successor
   Store = chorderl_store:create(binary_to_atom(NodeID, latin1)),
-  LoopData = #{node_id => NodeID, predecessor => nil, successor => Successor, store => Store},
+  LoopData =
+    #{node_id => NodeID,
+      predecessor => nil,
+      successor => Successor,
+      store => Store},
   {ok, LoopData}.
 
 terminate(_Reason, _LoopData) ->
@@ -93,12 +119,6 @@ terminate(_Reason, _LoopData) ->
 handle_cast(stop, LoopData) ->
   {stop, normal, LoopData};
 
-% Peer needs to know our key
-handle_cast({key, Qref, From}, LoopData) ->
-  NodeID = maps:get(node_id, LoopData),
-  From ! {Qref, NodeID},
-  {noreply, LoopData};
-
 % New thinks it might be our predecessor
 handle_cast({notify, New}, LoopData) ->
   NodeID = maps:get(node_id, LoopData),
@@ -106,24 +126,53 @@ handle_cast({notify, New}, LoopData) ->
   Pred = notify(New, NodeID, Predecessor), % find out if New can be our new predecessor
   {noreply, LoopData#{predecessor := Pred}};
 
+% Peer needs to know our key
+handle_cast({query_key, Qref, From}, LoopData) ->
+  NodeID = maps:get(node_id, LoopData),
+  From ! {Qref, NodeID},
+  {noreply, LoopData};
+
 % Peer needs to know our Predecessor
-handle_cast({request, Requester}, LoopData) ->
+handle_cast({query_predecessor, From}, LoopData) ->
   Predecessor = maps:get(predecessor, LoopData),
-  request(Requester, Predecessor),
+  cast_send_predecessor(From, Predecessor),
+  {noreply, LoopData};
+
+% NewNode needs to know our Successor
+handle_cast({query_successor, Qref, From}, LoopData) ->
+  Successor = maps:get(successor, LoopData),
+  From ! {Qref, Successor},
+  {noreply, LoopData};
+
+% Peer needs to know who its Successor is
+% NewNode = {NodeID, Pid}
+handle_cast({find_successor, Qref, NewNode}, LoopData) ->
+  find_successor(NewNode, LoopData, Qref), %% todo: change LoopData to fing_tab
+  {noreply, LoopData};
+
+% Peer needs to know who its Predecessor is
+handle_cast({find_predecessor, Qref, {NewNodeID, From}}, LoopData) ->
+  Pred = find_predecessor(NewNodeID, LoopData), %% todo: change LoopData to fing_tab
+  From ! {Qref, Pred},
+  {noreply, LoopData};
+
+% called periodically, verifies our Successor todo: use ticker to trigger
+%% todo:  external process timer triggering cast_stabilize(Pid)
+handle_cast({stabilize}, LoopData) ->
+  {_, Spid} = maps:get(successor, LoopData),
+  cast_query_predecessor(Spid, self()), % ask our successor about its predecessor
   {noreply, LoopData};
 
 % Our successor tell us about its predecessor Pred
-handle_cast({status, Pred}, LoopData) ->
+handle_cast({status_predecessor, Pred}, LoopData) ->
   NodeID = maps:get(node_id, LoopData),
   Successor = maps:get(successor, LoopData),
-  Succ = stabilize(Pred, NodeID, Successor), % find out if Pred can be our new successor
+  Succ = update_successor(Pred, NodeID, Successor), % find out if Pred can be our new successor
   {noreply, LoopData#{successor := Succ}}; % update our successor
 
-% called periodically, verifies our Successor todo: remove
-handle_cast({stabilize}, LoopData) ->
-  Successor = maps:get(successor, LoopData),
-  stabilize(Successor), % ask our successor about its predecessor
-  {noreply, LoopData};
+% We are informed that our successor is Succ
+handle_cast({status_successor, Succ}, LoopData) ->
+  {noreply, LoopData#{successor := Succ}};
 
 %% A node will take care of all the keys it is responsible for. If not responsible, forward it to our Successor
 handle_cast({add, Key, Value, Qref, Client}, LoopData) ->
@@ -149,11 +198,6 @@ handle_cast({lookup, Key, Qref, Client}, LoopData) ->
 handle_cast(_, LoopData) ->
   {noreply, LoopData}.
 
-% called periodically, verifies our Successor
-handle_info(timeout, LoopData) ->
-  Successor = maps:get(successor, LoopData),
-  stabilize(Successor), %% todo: replace with external process timer triggering cast_stabilize(Pid)
-  {noreply, LoopData};
 %% todo handle_info(({nodeup, _Node})
 handle_info(_Other, LoopData) ->
   {noreply, LoopData}.
@@ -163,12 +207,23 @@ code_change(_OldVsn, LoopData, _Extra) ->
 
 %% Customer Services API
 
-stabilize({_, Spid}) ->
-  cast_request_predecessor(Spid, self()).
+connect(NodeID, nil) ->
+  {ok, {NodeID, self()}}; % set our Successesor to ourselves {NodeID, self()}}
+connect(NodeID, Peer) ->
+  Qref = make_ref(),
+  %cast_query_key(Peer, Qref, self()),
+  cast_find_successor(Peer, Qref, {NodeID, self()}),
+  receive
+    {Qref, {Skey, Spid}} ->
+      {ok, {Skey, Spid}} % set our Successor to Successor
+  after ?Timeout ->
+    io:format("Time out: no response~n",[]),
+    {error, timeout}
+  end.
 
 % A basic stabilization protocol is used to keep nodes' successors up to date
-% Asks Successor for Pred's successor, and decide whether Pred should be NodeID's successor instead
-stabilize(Pred, NodeID, Successor) ->
+% Asks Successor for Pred's successor, and decide whether Pred should be NodeID's (our) successor instead
+update_successor(Pred, NodeID, Successor) ->
   {Skey, Spid} = Successor,
   case Pred of
     nil -> % Our Successor's predecessor is nil
@@ -190,14 +245,6 @@ stabilize(Pred, NodeID, Successor) ->
       end
   end.
 
-request(Requester, Predecessor) ->
-  case Predecessor of
-    nil ->
-      cast_send_predecessor(Requester, nil);
-    {Pkey, Ppid} ->
-      cast_send_predecessor(Requester, {Pkey, Ppid})
-  end.
-
 notify({Nkey, Npid}, NodeID, Predecessor) ->
   case Predecessor of
     nil -> % Our Predecessor is nil
@@ -209,19 +256,6 @@ notify({Nkey, Npid}, NodeID, Predecessor) ->
         false -> % New node (Xkey) is not between us and our Predecessor (NodeId and Pkey)
           Predecessor
       end
-  end.
-
-connect(NodeID, nil) ->
-  {ok, {NodeID, self()}}; % set our Successesor to ourselves {NodeID, self()}}
-connect(_NodeID, Peer) ->
-  Qref = make_ref(),
-  cast_get_key(Peer, Qref, self()),
-  receive
-    {Qref, Skey} -> % what do you receive??? todo
-      {ok, {Skey, Peer}} % set our Successesor to {Skey, Peer} todo: always Peer returned ???
-  after ?Timeout ->
-    io:format("Time out: no response~n",[]),
-    {error, timeout}
   end.
 
 add(Key, Value, Qref, Client,
@@ -251,3 +285,28 @@ lookup(Key, Qref, Client,
           cast_lookup(Spid, Key, Qref, Client) % forward the lookup message to Spid instead
       end
   end.
+
+find_successor({NewNodeID, From}, LoopData, Qref) ->
+  {_PKey, Ppid} = find_predecessor(NewNodeID, LoopData), %% find Predecessor for NewNodeID
+  cast_query_successor(Ppid, Qref, From).  %% Ask Ppid, reply to Pid
+
+%% ask node NodeID to find NewNodeID's predecessor
+find_predecessor(NewNodeID, LoopData) ->
+  NodeID = maps:get(node_id, LoopData),
+  Successor = maps:get(successor, LoopData),
+  case Successor of
+    nil ->
+      nil;
+    {Skey, Spid} ->
+      case chorderl_utils:is_between(NewNodeID, NodeID, Skey) or (NewNodeID == Skey) of %% (NodeID, Skey]
+        true ->
+          {Skey, Spid};
+        false ->
+          closest_preceding_finger(NewNodeID, LoopData)
+      end
+  end.
+
+%% return closest finger preceding NewNodeID
+closest_preceding_finger(_NewNodeID, LoopData) ->
+  NodeID = maps:get(node_id, LoopData),
+  {NodeID, self()}. %% todo
