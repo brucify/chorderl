@@ -19,9 +19,9 @@
 -define(NodeID1, (chorderl_utils:generate_node_id(?IP1))).
 -define(NodeID2, (chorderl_utils:generate_node_id(?IP2))).
 -define(NodeID3, (chorderl_utils:generate_node_id(?IP3))).
--define(ProcName1, (binary_to_atom(<<"chorderl_", ?NodeID1/binary>>, latin1))).
--define(ProcName2, (binary_to_atom(<<"chorderl_", ?NodeID2/binary>>, latin1))).
--define(ProcName3, (binary_to_atom(<<"chorderl_", ?NodeID3/binary>>, latin1))).
+-define(ProcName1, (chorderl_utils:ip_to_proc_name(?IP1))).
+-define(ProcName2, (chorderl_utils:ip_to_proc_name(?IP2))).
+-define(ProcName3, (chorderl_utils:ip_to_proc_name(?IP3))).
 
 main_test_() ->
   NodeID1 = ?NodeID1,
@@ -63,7 +63,7 @@ main_test_() ->
 
 cast_query_key(ProcName) ->
   Qref = make_ref(),
-  chorderl:cast_query_key(ProcName, Qref, self()),
+  chorderl:cast_query_id(ProcName, Qref, self()),
   receive
     {Qref, NodeID} ->
       NodeID
