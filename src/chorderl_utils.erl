@@ -14,7 +14,9 @@
 %% API
 -export([registered/0, node_status/0, sort_registered/0, display_node/1]).
 
--export([cast_query_id/1, stabilize_all/0]).
+-export([cast_query_id/1, cast_query_fingers/1]).
+
+-export([stabilize_all/0, fix_fingers_all/0]).
 
 -export([is_between/3, generate_node_id/1, ip_to_proc_name/1, node_id_to_proc_name/1]).
 
@@ -113,6 +115,7 @@ node_status() ->
 %      ID = cast_query_id(ProcName),
       Succ = cast_query_successor(ProcName),
       Pred = cast_query_predecessor(ProcName),
+      Fingers = cast_query_fingers(ProcName),
 
 %      io:format(" Proc: ~p~n", [ProcName]),
 %      io:format(" ======~p=====~n", [whereis(ProcName)]),
@@ -129,6 +132,9 @@ node_status() ->
       io:format("|  Pred: ~p --->~n", [Pred]),
       io:format("|                      ~p~n", [whereis(ProcName)]),
       io:format("|                                 ---> Succ: ~p ~n", [Succ]),
+      io:format("|  Last 5 Fingers:                                    |~n"),
+      print_fingers_x(lists:reverse(Fingers), 5, 0),
+      io:format("|  Total: ~p~n", [length(Fingers)]),
       io:format("|                                                     |~n"),
       io:format(" ====================================================~n"),
       io:format("~n~n")
@@ -142,9 +148,29 @@ node_status() ->
     end,
   lists:map(Fun, Nodes).
 
+print_fingers_x([], _, _) ->
+  io:format("| ~p~n", [[]] );
+print_fingers_x(_Fingers, X, X) ->
+  ok;
+print_fingers_x([Finger | Rest], X, I) ->
+  io:format("| ~p~n", [Finger] ),
+  print_fingers_x(Rest, X, I+1).
+
+print_fingers([]) ->
+  ok;
+print_fingers([Finger | Rest]) ->
+  io:format("| ~p~n", [Finger] ),
+  print_fingers(Rest).
+
 stabilize_all() ->
   lists:map(
     fun(A)-> chorderl:cast_stabilize(A) end,
+    chorderl_utils:registered()
+  ).
+
+fix_fingers_all() ->
+  lists:map(
+    fun(A)-> chorderl:cast_fix_fingers(A) end,
     chorderl_utils:registered()
   ).
 
@@ -187,6 +213,17 @@ cast_query_successor(ProcName) ->
         nil ->
           nil
       end
+  after 1000 ->
+    io:format("Time out: no response~n",[]),
+    {error, timeout}
+  end.
+
+cast_query_fingers(ProcName) ->
+  Qref = make_ref(),
+  chorderl:cast_query_fingers(ProcName, Qref, self()),
+  receive
+    {Qref, FingerTableList} ->
+      FingerTableList
   after 1000 ->
     io:format("Time out: no response~n",[]),
     {error, timeout}

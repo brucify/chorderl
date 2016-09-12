@@ -9,3 +9,9 @@
 
 -define(Timeout, 1000).
 -define(M, 160).
+
+-define(KEY_NODE_ID, node_id).
+-define(KEY_PREDECESSOR, predecessor).
+-define(KEY_SUCEESSOR, successor).
+-define(KEY_FINGER_TABLE, fin_tab).
+-define(KEY_STORE, store).

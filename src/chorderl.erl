@@ -13,11 +13,11 @@
 %% API
 -export([join/1, join/2, stop/1]).
 
--export([cast_add/5, cast_notify/2, cast_stabilize/1, cast_lookup/4]).
--export([cast_query_id/3, cast_query_predecessor/3, cast_query_successor/3]).
+-export([cast_add/5, cast_notify/2, cast_stabilize/1, cast_lookup/4, cast_fix_fingers/1]).
+-export([cast_query_id/3, cast_query_predecessor/3, cast_query_successor/3, cast_query_fingers/3]).
 -export([cast_send_successor/2, cast_send_predecessor/3, cast_find_successor/3, cast_find_predecessor/3]).
 
--export([registered/0, stabilize_all/0, node_status/0, fix_fingers/0]).
+-export([registered/0, stabilize_all/0, node_status/0, fix_fingers_all/0]).
 
 %% Exported Client Functions
 %% Operation & Maintenance API
@@ -49,8 +49,8 @@ join(Key, Peer) ->
 stop(NodeID) ->
   gen_server:cast(NodeID, stop).
 
-fix_fingers() ->
-  ok.
+fix_fingers_all() ->
+  chorderl_utils:fix_fingers_all().
 
 registered() ->
   chorderl_utils:registered().
@@ -73,6 +73,9 @@ cast_notify(Pid, New) ->
 %% todo draw SSD of stablization, join, init_fing_table
 cast_stabilize(Pid) ->
   gen_server:cast(Pid, {stabilize}).
+
+cast_fix_fingers(Pid) ->
+  gen_server:cast(Pid, {fix_fingers}).
 
 %% Save a Key/Value pair
 cast_add(Pid, Key, Value, Qref, Client) ->
@@ -100,6 +103,9 @@ cast_query_predecessor(Pid, From, Type) ->
 %% Check who is Successor of Pid. NewNode needs to know
 cast_query_successor(Pid, Qref, From) ->
   gen_server:cast(Pid, {query_successor, Qref, From}).
+
+cast_query_fingers(Pid, Qref, From) ->
+  gen_server:cast(Pid, {query_fingers, Qref, From}).
 
 %%
 %% find (async with async reply)
