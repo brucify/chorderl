@@ -32,8 +32,8 @@ init([NodeID, PeerPid]) ->
     #{?KEY_NODE_ID => NodeID,
       ?KEY_PREDECESSOR => nil,
       ?KEY_SUCEESSOR => Successor,
-%%      ?KEY_FINGER_TABLE => FingerTableList,
-      ?KEY_FINGER_TABLE => [],
+      ?KEY_FINGER_TABLE => FingerTableList,
+%%      ?KEY_FINGER_TABLE => [],
       ?KEY_STORE => Store},
   {ok, LoopData}.
 
@@ -111,9 +111,9 @@ handle_cast({stabilize}, LoopData) ->
 handle_cast({fix_fingers}, LoopData) ->
   FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
   NodeID = maps:get(?KEY_NODE_ID, LoopData),
+  Successor = maps:get(?KEY_SUCEESSOR, LoopData),
   %%io:format("~p: (stabilize) Current successor is ~p. Querying its predecessor...~n", [self(), Spid]),
-  NewFingerTableList = chorderl_fintab:fix_fingers(NodeID, FingerTableList),
-  io:format("!"),
+  NewFingerTableList = chorderl_fintab:fix_fingers(NodeID, Successor, FingerTableList),
   {noreply, LoopData#{?KEY_FINGER_TABLE := NewFingerTableList}};
 
 % Our successor tell us about its predecessor Pred

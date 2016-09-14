@@ -11,7 +11,7 @@
 -include("chorderl.hrl").
 
 %% API
--export([init_finger_table/2, notify/3, fix_fingers/2]).
+-export([init_finger_table/2, notify/3, fix_fingers/3]).
 -export([find_successor/5, find_predecessor/4, update_successor/3]).
 
 -export([get_finger_start/3]).
@@ -116,12 +116,18 @@ fill_finger_table_with_self(NodeID, List, I) ->
 %%              end,
 %%  fill_finger_table(NodeID, List ++ [Finger1], I + 1, End).
 
-fix_fingers(NodeID, FingerTableList) ->
+fix_fingers(NodeID, Successor, FingerTableList) ->
   Index = random:uniform(?M),
-  { StartID, {_Fkey, _Fpid} } = lists:nth(Index, FingerTableList),
+  { StartID, OldFinger } = lists:nth(Index, FingerTableList),
   Qref = make_ref(),
-  Result = chorderl:call_find_successor(chorderl_utils:node_id_to_proc_name(NodeID), Qref, { StartID, self()} ),
+  %%Result = chorderl:call_find_successor(self(), Qref, { StartID, self()} ),
+  Result = find_successor({ StartID, self()}, NodeID, Successor, FingerTableList, Qref),
   NewFinger = { StartID, Result },
+  if
+    Result /= OldFinger ->
+      io:format("~p: (fix_fingers) Finger change: ~p -> ~p~n", [self(), chorderl_utils:display_node(OldFinger), chorderl_utils:display_node(Result)]);
+    true -> ok
+  end,
 %%  chorderl:cast_find_successor(chorderl_utils:node_id_to_proc_name(NodeID), Qref, { StartID, self()} ),
 %%  NewFinger =
 %%    receive
