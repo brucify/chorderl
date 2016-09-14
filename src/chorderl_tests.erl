@@ -41,9 +41,9 @@ main_test_() ->
       ?_assertMatch(ok, chorderl:cast_stabilize(?ProcName1)),
 
       ?_assertMatch({NodeID2, _}, cast_query_predecessor(?ProcName1)),
-      ?_assertMatch({NodeID2, _}, cast_query_successor(?ProcName1)),
+      ?_assertMatch({NodeID2, _}, call_query_successor(?ProcName1)),
       ?_assertMatch(NodeID1, cast_query_predecessor(?ProcName2)),
-      ?_assertMatch({NodeID1, _}, cast_query_successor(?ProcName2)),
+      ?_assertMatch({NodeID1, _}, call_query_successor(?ProcName2)),
 
       ?_assertMatch({ok, _Pid}, chorderl:join(?IP3, ?ProcName2)),
 
@@ -52,11 +52,11 @@ main_test_() ->
       ?_assertMatch(ok, chorderl:cast_stabilize(?ProcName1)),
 
       ?_assertMatch({NodeID3, _}, cast_query_predecessor(?ProcName1)),
-      ?_assertMatch({NodeID2, _}, cast_query_successor(?ProcName1)),
+      ?_assertMatch({NodeID2, _}, call_query_successor(?ProcName1)),
       ?_assertMatch({NodeID1, _}, cast_query_predecessor(?ProcName2)),
-      ?_assertMatch({NodeID3, _}, cast_query_successor(?ProcName2)),
+      ?_assertMatch({NodeID3, _}, call_query_successor(?ProcName2)),
       ?_assertMatch(nil, cast_query_predecessor(?ProcName3)),
-      ?_assertMatch({NodeID1, _}, cast_query_successor(?ProcName3))
+      ?_assertMatch({NodeID1, _}, call_query_successor(?ProcName3))
 
     ]
   }.
@@ -82,13 +82,14 @@ cast_query_predecessor(ProcName) ->
     {error, timeout}
   end.
 
-cast_query_successor(ProcName) ->
-  Qref = make_ref(),
-  chorderl:cast_query_successor(ProcName, Qref, self()),
-  receive
-    {Qref, Succ} ->
-      Succ
-  after 1000 ->
-    io:format("Time out: no response~n",[]),
-    {error, timeout}
-  end.
+call_query_successor(ProcName) ->
+  Result = chorderl:call_query_successor(ProcName),
+  Result.
+%%  chorderl:call_query_successor(ProcName, Qref, self()),
+%%  receive
+%%    {Qref, Succ} ->
+%%      Succ
+%%  after 1000 ->
+%%    io:format("Time out: no response~n",[]),
+%%    {error, timeout}
+%%  end.

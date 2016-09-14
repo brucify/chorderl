@@ -113,7 +113,7 @@ node_status() ->
   Fun =
     fun(ProcName) ->
 %      ID = cast_query_id(ProcName),
-      Succ = cast_query_successor(ProcName),
+      Succ = call_query_successor(ProcName),
       Pred = cast_query_predecessor(ProcName),
       Fingers = cast_query_fingers(ProcName),
 
@@ -201,22 +201,29 @@ cast_query_predecessor(ProcName) ->
     {error, timeout}
   end.
 
-cast_query_successor(ProcName) ->
-  Qref = make_ref(),
-  chorderl:cast_query_successor(ProcName, Qref, self()),
-  receive
-    {Qref, Succ} ->
-      case Succ of
-        {SuccBin, SuccPid} ->
-          %{binary_to_atom(<<SuccBin/binary>>, latin1), SuccPid};
-          SuccPid;
-        nil ->
-          nil
-      end
-  after 1000 ->
-    io:format("Time out: no response~n",[]),
-    {error, timeout}
+call_query_successor(ProcName) ->
+  Result = chorderl:call_query_successor(ProcName),
+  case Result of
+    {_SuccBin, SuccPid} ->
+      %{binary_to_atom(<<SuccBin/binary>>, latin1), SuccPid};
+      SuccPid;
+    nil ->
+      nil
   end.
+%%  chorderl:cast_query_successor(ProcName, Qref, self()),
+%%  receive
+%%    {Qref, Succ} ->
+%%      case Succ of
+%%        {SuccBin, SuccPid} ->
+%%          %{binary_to_atom(<<SuccBin/binary>>, latin1), SuccPid};
+%%          SuccPid;
+%%        nil ->
+%%          nil
+%%      end
+%%  after 1000 ->
+%%    io:format("Time out: no response~n",[]),
+%%    {error, timeout}
+%%  end.
 
 cast_query_fingers(ProcName) ->
   Qref = make_ref(),

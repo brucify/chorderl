@@ -14,8 +14,8 @@
 -export([join/1, join/2, stop/1]).
 
 -export([cast_add/5, cast_notify/2, cast_stabilize/1, cast_lookup/4, cast_fix_fingers/1]).
--export([cast_query_id/3, cast_query_predecessor/3, cast_query_successor/3, cast_query_fingers/3]).
--export([cast_send_successor/2, cast_send_predecessor/3, cast_find_successor/3, cast_find_predecessor/3]).
+-export([cast_query_id/3, cast_query_predecessor/3, call_query_successor/1, cast_query_fingers/3]).
+-export([cast_send_successor/2, cast_send_predecessor/3, call_find_successor/3, cast_find_predecessor/3]).
 
 -export([registered/0, stabilize_all/0, node_status/0, fix_fingers_all/0]).
 
@@ -101,8 +101,8 @@ cast_query_predecessor(Pid, From, Type) ->
   gen_server:cast(Pid, {query_predecessor, From, Type}).
 
 %% Check who is Successor of Pid. NewNode needs to know
-cast_query_successor(Pid, Qref, From) ->
-  gen_server:cast(Pid, {query_successor, Qref, From}).
+call_query_successor(Pid) ->
+  gen_server:call(Pid, {query_successor}).
 
 cast_query_fingers(Pid, Qref, From) ->
   gen_server:cast(Pid, {query_fingers, Qref, From}).
@@ -112,8 +112,8 @@ cast_query_fingers(Pid, Qref, From) ->
 %%
 
 % Request Successor of From
-cast_find_successor(Pid, Qref, {NodeID, From}) ->
-  gen_server:cast(Pid, {find_successor, Qref, {NodeID, From}}).
+call_find_successor(Pid, Qref, {NodeID, From}) ->
+  gen_server:call(Pid, {find_successor, Qref, {NodeID, From}}).
 
 % Request Predecessor of From
 cast_find_predecessor(Pid, Qref, {NodeID, From}) ->

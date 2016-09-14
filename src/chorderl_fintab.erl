@@ -32,17 +32,19 @@ init_finger_table(NodeID, PeerPid) ->
   io:format("~p: (init_finger_table) Finding successor...~n", [self()]),
   StartID = get_finger_start(NodeID, 1, ?M), % N.finger[1].start
   Qref = make_ref(),
-  chorderl:cast_find_successor(PeerPid, Qref, {StartID, self()}),
-  Finger =
-    receive {Qref, {Skey, Spid}} ->
-      io:format("~p: (init_finger_table) Found successor: ~p~n", [self(), Spid]),
-        %%io:format("~p: (init_finger_table) Found successor: ~p. Checking its predecessor...~n", [self(), Spid]),
-        %%chorderl:cast_query_predecessor(Spid, self(), init_finger_table),
-      { StartID, {Skey, Spid} }
-    after ?Timeout ->
-      io:format("~p: (init_finger_table) Time out: no response~n",[self()]),
-      {error, timeout}
-    end,
+  Result = chorderl:call_find_successor(PeerPid, Qref, {StartID, self()}),
+  Finger = { StartID, Result },
+%%  chorderl:cast_find_successor(PeerPid, Qref, {StartID, self()}),
+%%  Finger =
+%%    receive {Qref, {Skey, Spid}} ->
+%%      io:format("~p: (init_finger_table) Found successor: ~p~n", [self(), Spid]),
+%%        %%io:format("~p: (init_finger_table) Found successor: ~p. Checking its predecessor...~n", [self(), Spid]),
+%%        %%chorderl:cast_query_predecessor(Spid, self(), init_finger_table),
+%%      { StartID, {Skey, Spid} }
+%%    after ?Timeout ->
+%%      io:format("~p: (init_finger_table) Time out: no response~n",[self()]),
+%%      {error, timeout}
+%%    end,
   FingerTableList = fill_finger_table(NodeID, PeerPid, [Finger], 1, ?M), %% from i = 1 to m - 1
   FingerTableList.
 
@@ -58,17 +60,19 @@ fill_finger_table(NodeID, PeerPid, FingerTableList, Index, End) ->
          {NextStartID, {Fkey, Fpid} };
        false ->
          Qref = make_ref(),
-         chorderl:cast_find_successor(PeerPid, Qref, {NextStartID, self()}),
-         receive
-           {Qref, {Skey, Spid}} ->
-             io:format("~p: (fill_finger_table) Found finger: ~p~n", [self(), Spid]),
-             %%io:format("~p: (init_finger_table) Found successor: ~p. Checking its predecessor...~n", [self(), Spid]),
-             %%chorderl:cast_query_predecessor(Spid, self(), init_finger_table),
-             { NextStartID, {Skey, Spid} }
-         after ?Timeout ->
-           io:format("~p: (fill_finger_table) Time out: no response~n",[self()]),
-           {error, timeout}
-         end
+         Result = chorderl:call_find_successor(PeerPid, Qref, {NextStartID, self()}),
+         { NextStartID, Result }
+%%         chorderl:cast_find_successor(PeerPid, Qref, {NextStartID, self()}),
+%%         receive
+%%           {Qref, {Skey, Spid}} ->
+%%             io:format("~p: (fill_finger_table) Found finger: ~p~n", [self(), Spid]),
+%%             %%io:format("~p: (init_finger_table) Found successor: ~p. Checking its predecessor...~n", [self(), Spid]),
+%%             %%chorderl:cast_query_predecessor(Spid, self(), init_finger_table),
+%%             { NextStartID, {Skey, Spid} }
+%%         after ?Timeout ->
+%%           io:format("~p: (fill_finger_table) Time out: no response~n",[self()]),
+%%           {error, timeout}
+%%         end
       end,
   fill_finger_table(NodeID, PeerPid, FingerTableList ++ [NextFinger], Index+1, End).
 
@@ -116,18 +120,20 @@ fix_fingers(NodeID, FingerTableList) ->
   Index = random:uniform(?M),
   { StartID, {_Fkey, _Fpid} } = lists:nth(Index, FingerTableList),
   Qref = make_ref(),
-  chorderl:cast_find_successor(chorderl_utils:node_id_to_proc_name(NodeID), Qref, { StartID, self()} ),
-  NewFinger =
-    receive
-      {Qref, {Skey, Spid}} ->
-        io:format("~p: (fix_fingers) Found finger: ~p~n", [self(), Spid]),
-        %%io:format("~p: (init_finger_table) Found successor: ~p. Checking its predecessor...~n", [self(), Spid]),
-        %%chorderl:cast_query_predecessor(Spid, self(), init_finger_table),
-        { StartID, {Skey, Spid} }
-    after ?Timeout ->
-      io:format("~p: (fix_fingers) Time out: no response~n",[self()]),
-      {error, timeout}
-    end,
+  Result = chorderl:call_find_successor(chorderl_utils:node_id_to_proc_name(NodeID), Qref, { StartID, self()} ),
+  NewFinger = { StartID, Result },
+%%  chorderl:cast_find_successor(chorderl_utils:node_id_to_proc_name(NodeID), Qref, { StartID, self()} ),
+%%  NewFinger =
+%%    receive
+%%      {Qref, {Skey, Spid}} ->
+%%        io:format("~p: (fix_fingers) Found finger: ~p~n", [self(), Spid]),
+%%        %%io:format("~p: (init_finger_table) Found successor: ~p. Checking its predecessor...~n", [self(), Spid]),
+%%        %%chorderl:cast_query_predecessor(Spid, self(), init_finger_table),
+%%        { StartID, {Skey, Spid} }
+%%    after ?Timeout ->
+%%      io:format("~p: (fix_fingers) Time out: no response~n",[self()]),
+%%      {error, timeout}
+%%    end,
   NewFingerTableList = lists:keyreplace( StartID, 1, FingerTableList, NewFinger ),
   NewFingerTableList.
 
@@ -135,10 +141,13 @@ fix_fingers(NodeID, FingerTableList) ->
 find_successor({NewNodeID, From}, NodeID, Successor, FingerTableList, Qref) ->
   Result = find_predecessor(NewNodeID, NodeID, Successor, FingerTableList), %% find Predecessor for NewNodeID from LoopData
   case Result of
+    {NodeID, _Self} ->
+      Successor;
     {_PKey, Ppid} ->
-      chorderl:cast_query_successor(Ppid, Qref, From);  %% Ask Ppid, reply to Pid
+      chorderl:call_query_successor(Ppid);  %% Ask Ppid, reply to Pid
     nil ->
-      From ! {Qref, {NodeID, self()}}
+      %% From ! {Qref, {NodeID, self()}}
+      {NodeID, self()}
   end.
 
 %% ask node NodeID to find NewNodeID's predecessor

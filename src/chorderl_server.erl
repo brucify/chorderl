@@ -13,7 +13,7 @@
 -behaviour(gen_server).
 
 %% API
--export([init/1, terminate/2, handle_cast/2, handle_info/2, code_change/3]).
+-export([init/1, terminate/2, handle_cast/2, handle_call/3, handle_info/2, code_change/3]).
 
 
 %% Callback Functions
@@ -39,6 +39,23 @@ init([NodeID, PeerPid]) ->
 
 terminate(_Reason, _LoopData) ->
   ok.
+
+
+% NewNode needs to know our Successor
+handle_call({query_successor}, _From, LoopData) ->
+  Successor = maps:get(?KEY_SUCEESSOR, LoopData),
+  %%From ! {Qref, Successor},
+
+  {reply, Successor, LoopData};
+
+% NewNode wants to know who its Successor is
+% NewNode = {NodeID, Pid}
+handle_call({find_successor, Qref, NewNode}, _From, LoopData) ->
+  NodeID = maps:get(?KEY_NODE_ID, LoopData),
+  Successor = maps:get(?KEY_SUCEESSOR, LoopData),
+  FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
+  Reply = chorderl_fintab:find_successor(NewNode, NodeID, Successor, FingerTableList, Qref),
+  {reply, Reply, LoopData}.
 
 handle_cast(stop, LoopData) ->
   {stop, normal, LoopData};
@@ -68,25 +85,9 @@ handle_cast({query_predecessor, From, Type}, LoopData) ->
   chorderl:cast_send_predecessor(From, Predecessor, Type),
   {noreply, LoopData};
 
-% NewNode needs to know our Successor
-handle_cast({query_successor, Qref, From}, LoopData) ->
-  Successor = maps:get(?KEY_SUCEESSOR, LoopData),
-  From ! {Qref, Successor},
-  {noreply, LoopData};
-
 handle_cast({query_fingers, Qref, From}, LoopData) ->
   FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
   From ! {Qref, FingerTableList},
-  {noreply, LoopData};
-
-% NewNode wants to know who its Successor is
-% NewNode = {NodeID, Pid}
-handle_cast({find_successor, Qref, NewNode}, LoopData) ->
-  NodeID = maps:get(?KEY_NODE_ID, LoopData),
-  Successor = maps:get(?KEY_SUCEESSOR, LoopData),
-  FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
-  %%
-  chorderl_fintab:find_successor(NewNode,  NodeID, Successor, FingerTableList, Qref),
   {noreply, LoopData};
 
 % Peer needs to know who its Predecessor is
@@ -176,12 +177,14 @@ connect(NodeID, nil) ->
 connect(NodeID, PeerPid) ->
   Qref = make_ref(),
   %cast_query_id(Peer, Qref, self()),
-  chorderl:cast_find_successor(PeerPid, Qref, {NodeID, self()}),
-  receive
-    {Qref, {Skey, Spid}} ->
-      {ok, {Skey, Spid}} % set our Successor to Successor
-  after ?Timeout ->
-    io:format("Time out: no response~n",[]),
-    {error, timeout}
-  end.
+  Result = chorderl:call_find_successor(PeerPid, Qref, {NodeID, self()}),
+  {ok, Result}.
+%%  chorderl:cast_find_successor(PeerPid, Qref, {NodeID, self()}),
+%%  receive
+%%    {Qref, {Skey, Spid}} ->
+%%      {ok, {Skey, Spid}} % set our Successor to Successor
+%%  after ?Timeout ->
+%%    io:format("Time out: no response~n",[]),
+%%    {error, timeout}
+%%  end.
 
