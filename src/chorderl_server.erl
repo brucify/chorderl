@@ -23,6 +23,7 @@
 %% 3. Create fingers
 %% 4. Create store
 init([NodeID, PeerPid]) ->
+  lager:start(),
   %% {ok, Successor} = connect(NodeID, PeerPid), % Ask Peer for our Successor
   FingerTableList = chorderl_fintab:init_finger_table(NodeID, PeerPid),
   {_StartID, Successor } = lists:nth( 1, FingerTableList ),

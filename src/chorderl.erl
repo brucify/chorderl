@@ -9,6 +9,7 @@
 -module(chorderl).
 
 -include("chorderl.hrl").
+-compile([{parse_transform, lager_transform}]).
 
 %% API
 -export([join/1, join/2, stop/1]).
@@ -17,7 +18,7 @@
 -export([cast_query_id/3, cast_query_predecessor/3, call_query_successor/1, cast_query_fingers/3]).
 -export([cast_send_successor/2, cast_send_predecessor/3, call_find_successor/3, cast_find_predecessor/3]).
 
--export([registered/0, stabilize_all/0, node_status/0, fix_fingers_all/0]).
+-export([registered/0, stabilize_all/0, node_status/0, fix_fingers_all/0, demo/1]).
 
 %% Exported Client Functions
 %% Operation & Maintenance API
@@ -35,10 +36,18 @@ join(Key) ->
 % Key: <<"the key">>
 % Peer: <0.999.0>
 join(Key, Peer) ->
-  NodeID = chorderl_utils:generate_node_id(Key),
+  NodeID=
+    case ?M of
+      160 ->
+        chorderl_utils:generate_node_id(Key);
+      8 -> %% 0-255
+        chorderl_utils:generate_node_id_8_bits(Key)
+    end,
   %%Module = atom_to_binary(?MODULE, latin1),
   %%ProcName = binary_to_atom(<<Module/binary, "_", NodeID/integer>>, latin1), % e.g. 'chorderl_ì%KÅ\205\021Î¿#}qÆ\034\016ìâ´quX'
   ProcName = chorderl_utils:node_id_to_proc_name(NodeID),
+  lager:info("ProcName: ~p", [ProcName]),
+
   gen_server:start_link(
     {local, ProcName},
     chorderl_server,
@@ -61,6 +70,8 @@ stabilize_all() ->
 node_status() ->
   chorderl_utils:node_status().
 
+demo(N) ->
+  chorderl_utils:demo(N).
 %%
 %% gen_server APIs
 %%
