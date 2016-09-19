@@ -16,11 +16,13 @@
 
 -export([cast_query_id/1, cast_query_fingers/1]).
 
--export([stabilize_all/0, fix_fingers_all/0]).
+-export([stabilize_all/0, fix_fingers_all/0, stabilize_all/1, fix_fingers_all/1]).
 
 -export([is_between/3, generate_node_id/1, ip_to_proc_name/1, node_id_to_proc_name/1]).
 
 -export([demo/0, demo/1]).
+
+-export([generate_node_id_8_bits/1]).
 
 %% Check if KeyX is between Key1 and Key2
 %is_between(KeyX, Key1, Key2) when (Key1 < KeyX) and (KeyX < Key2) ->
@@ -62,6 +64,9 @@ generate_node_id(Key) ->
   NodeID = crypto:hash(sha, Key),
   binary:decode_unsigned(NodeID, big).
 
+generate_node_id_8_bits(Key) ->
+  Key.
+
 %% List processes starting with "chorderl..." in erlang:registered()
 registered() ->
   look_for_chorderl(
@@ -100,7 +105,13 @@ look_for_chorderl([_ | T], Res) ->
 
 % IP: <<"127.0.0.3">>
 ip_to_proc_name(IP) ->
-  NodeID = chorderl_utils:generate_node_id(IP),
+  NodeID=
+    case ?M of
+      160 ->
+        chorderl_utils:generate_node_id(IP);
+      8 -> %% 0-255
+        chorderl_utils:generate_node_id_8_bits(IP)
+    end,
   ProcName = node_id_to_proc_name(NodeID),
   ProcName.
 
@@ -116,6 +127,7 @@ node_status() ->
       Succ = call_query_successor(ProcName),
       Pred = cast_query_predecessor(ProcName),
       Fingers = cast_query_fingers(ProcName),
+      NodeID = cast_query_id(ProcName),
 
 %      io:format(" Proc: ~p~n", [ProcName]),
 %      io:format(" ======~p=====~n", [whereis(ProcName)]),
@@ -128,12 +140,13 @@ node_status() ->
 
       io:format(" ===================== ~p =====================~n", [whereis(ProcName)]),
       io:format("|  name: ~p~n", [ProcName]),
+      io:format("|  id: ~p~n", [NodeID]),
       io:format("|                                                     |~n"),
       io:format("|  Pred: ~p --->~n", [Pred]),
       io:format("|                      ~p~n", [whereis(ProcName)]),
       io:format("|                                 ---> Succ: ~p ~n", [Succ]),
-      io:format("|  Last 5 Fingers:                                    |~n"),
-      print_fingers_x(lists:reverse(Fingers), 5, 0),
+      io:format("|  Last 8 Fingers:                                    |~n"),
+      print_fingers_x(lists:reverse(Fingers), 8, 0),
       io:format("|  Total: ~p~n", [length(Fingers)]),
       io:format("|                                                     |~n"),
       io:format(" ====================================================~n"),
@@ -149,7 +162,7 @@ node_status() ->
   lists:map(Fun, Nodes).
 
 print_fingers_x([], _, _) ->
-  io:format("| ~p~n", [[]] );
+  ok;
 print_fingers_x(_Fingers, X, X) ->
   ok;
 print_fingers_x([Finger | Rest], X, I) ->
@@ -173,6 +186,12 @@ fix_fingers_all() ->
     fun(A)-> chorderl:cast_fix_fingers(A) end,
     chorderl_utils:registered()
   ).
+
+stabilize_all(N) ->
+  lists:map(fun(_) -> chorderl_utils:stabilize_all() end, lists:seq(1, N)).
+
+fix_fingers_all(N) ->
+  lists:map(fun(_) -> chorderl_utils:fix_fingers_all() end, lists:seq(1, N)).
 
 cast_query_id(ProcName) ->
   Qref = make_ref(),
@@ -266,7 +285,12 @@ sort_registered() ->
 %%  demo(6, 1).
 
 demo(N) ->
-  demo(N, 1).
+  case ?M of
+    160 ->
+      demo(N, 1);
+    8 ->
+      demo_8_bits(N, 0)
+  end.
 
 demo(1, 1) ->
   chorderl:join(<<"127.0.0.1">>);
@@ -280,6 +304,17 @@ demo(N, X) ->
   IP = list_to_binary("127.0.0." ++ integer_to_list(X)),
   chorderl:join(IP, chorderl_utils:ip_to_proc_name(<<"127.0.0.1">>)),
   demo(N, X+1).
+
+demo_8_bits(1, 0) ->
+  chorderl:join(0);
+demo_8_bits(N, 0) ->
+  chorderl:join(0),
+  demo_8_bits(N, 1);
+demo_8_bits(N, X) when X == N-1 ->
+  chorderl:join(X, chorderl_utils:ip_to_proc_name(0));
+demo_8_bits(N, X) ->
+  chorderl:join(X, chorderl_utils:ip_to_proc_name(0)),
+  demo_8_bits(N, X+1).
 
 demo() ->
     chorderl:join(<<"127.0.0.1">>),
