@@ -51,11 +51,11 @@ handle_call({query_successor}, _From, LoopData) ->
 
 % NewNode wants to know who its Successor is
 % NewNode = {NodeID, Pid}
-handle_call({find_successor, Qref, NewNode}, _From, LoopData) ->
+handle_call({find_successor, NewNode}, _From, LoopData) ->
   NodeID = maps:get(?KEY_NODE_ID, LoopData),
   Successor = maps:get(?KEY_SUCEESSOR, LoopData),
   FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
-  Reply = chorderl_fintab:find_successor(NewNode, NodeID, Successor, FingerTableList, Qref),
+  Reply = chorderl_fintab:find_successor(NewNode, NodeID, Successor, FingerTableList),
   {reply, Reply, LoopData}.
 
 handle_cast(stop, LoopData) ->
@@ -176,9 +176,8 @@ code_change(_OldVsn, LoopData, _Extra) ->
 connect(NodeID, nil) ->
   {ok, {NodeID, self()}}; % set our Successesor to ourselves {NodeID, self()}}
 connect(NodeID, PeerPid) ->
-  Qref = make_ref(),
   %cast_query_id(Peer, Qref, self()),
-  Result = chorderl:call_find_successor(PeerPid, Qref, {NodeID, self()}),
+  Result = chorderl:call_find_successor(PeerPid, {NodeID, self()}),
   {ok, Result}.
 %%  chorderl:cast_find_successor(PeerPid, Qref, {NodeID, self()}),
 %%  receive

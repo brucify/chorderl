@@ -12,7 +12,7 @@
 
 %% API
 -export([init_finger_table/2, notify/3, fix_fingers/3]).
--export([find_successor/5, find_predecessor/4, update_successor/3]).
+-export([find_successor/4, find_predecessor/4, update_successor/3]).
 
 -export([get_finger_start/3]).
 
@@ -31,8 +31,7 @@ init_finger_table(NodeID, nil) ->
 init_finger_table(NodeID, PeerPid) ->
   io:format("~p: (init_finger_table) Finding successor...~n", [self()]),
   StartID = get_finger_start(NodeID, 1, ?M), % N.finger[1].start
-  Qref = make_ref(),
-  Result = chorderl:call_find_successor(PeerPid, Qref, {StartID, self()}),
+  Result = chorderl:call_find_successor(PeerPid, {StartID, self()}),
   Finger = { StartID, Result },
 %%  chorderl:cast_find_successor(PeerPid, Qref, {StartID, self()}),
 %%  Finger =
@@ -59,8 +58,7 @@ fill_finger_table(NodeID, PeerPid, FingerTableList, Index, End) ->
          %%io:format("~p: (init_finger_table) Copying previous finger...~n", [self()]),
          {NextStartID, {Fkey, Fpid} };
        false ->
-         Qref = make_ref(),
-         Result = chorderl:call_find_successor(PeerPid, Qref, {NextStartID, self()}),
+         Result = chorderl:call_find_successor(PeerPid, {NextStartID, self()}),
          { NextStartID, Result }
 %%         chorderl:cast_find_successor(PeerPid, Qref, {NextStartID, self()}),
 %%         receive
@@ -119,9 +117,8 @@ fill_finger_table_with_self(NodeID, List, I) ->
 fix_fingers(NodeID, Successor, FingerTableList) ->
   Index = random:uniform(?M),
   { StartID, OldFinger } = lists:nth(Index, FingerTableList),
-  Qref = make_ref(),
   %%Result = chorderl:call_find_successor(self(), Qref, { StartID, self()} ),
-  Result = find_successor({ StartID, self()}, NodeID, Successor, FingerTableList, Qref),
+  Result = find_successor({ StartID, self()}, NodeID, Successor, FingerTableList),
   NewFinger = { StartID, Result },
   if
     Result /= OldFinger ->
@@ -144,7 +141,7 @@ fix_fingers(NodeID, Successor, FingerTableList) ->
   NewFingerTableList.
 
 %% todo query_successor (reply at once) vs. find_successor (continue to find on other nodes? disrupt)?
-find_successor({NewNodeID, From}, NodeID, Successor, FingerTableList, Qref) ->
+find_successor({NewNodeID, From}, NodeID, Successor, FingerTableList) ->
   Result = find_predecessor(NewNodeID, NodeID, Successor, FingerTableList), %% find Predecessor for NewNodeID from LoopData
   case Result of
     {NodeID, _Self} ->
@@ -171,7 +168,7 @@ find_predecessor(NewNodeID, NodeID, Successor, FingerTableList) ->
         true ->
           {Skey, Spid};
         false ->
-          closest_preceding_finger(NewNodeID, NodeID, FingerTableList, ?M)
+          closest_preceding_finger(NewNodeID, NodeID, FingerTableList, ?M) %% for i = m downto 1
       end
   end.
 
@@ -184,15 +181,15 @@ find_predecessor(NewNodeID, NodeID, Successor, FingerTableList) ->
 closest_preceding_finger(_NewNodeID, NodeID, _FingerTableList, 1) ->
   {NodeID, self()};
 closest_preceding_finger(NewNodeID, NodeID, FingerTableList, Index) ->
-%%  Finger = lists:nth(Index, FingerTableList),
-%%  { _StartID, {Fkey, Fpid} } = Finger,
-%%  case chorderl_utils:is_between(Fkey, NodeID, NewNodeID) of
-%%    true ->
-%%      {Fkey, Fpid};
-%%    false ->
-%%      closest_preceding_finger(NewNodeID, NodeID, FingerTableList, Index-1)
-%%  end.
-  {NodeID, self()}. %% DEBUG
+  Finger = lists:nth(Index, FingerTableList),
+  { _StartID, {Fkey, Fpid} } = Finger,
+  case chorderl_utils:is_between(Fkey, NodeID, NewNodeID) of
+    true ->
+      {Fkey, Fpid};
+    false ->
+      closest_preceding_finger(NewNodeID, NodeID, FingerTableList, Index-1)
+  end.
+%%  {NodeID, self()}. %% DEBUG
 
 
 %% Pred: Our successor's Predecessor

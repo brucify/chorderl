@@ -35,12 +35,21 @@
 %  %io:format("chorderl_utils: comparing Nkey: ~p, Pkey ~p and NodeID: ~p~n",[KeyX, Key1, Key2]),
 %  false.
 
+is_between(X, A, B) when X >= ?M ->
+  is_between(X rem ?M, A, B);
 is_between(X, A, B) when B > A ->
   B > X andalso X > A;
 is_between(X, A, B) when A > B ->
   not (B > X andalso X > A);
 is_between(X, A, B) when A == B ->
   true.
+
+%%is_between(X, A, B) when B > A ->
+%%  B > X andalso X > A;
+%%is_between(X, A, B) when A > B ->
+%%  not (B > X andalso X > A);
+%%is_between(X, A, B) when A == B ->
+%%  true.
 
 %% todo NodeID has to be integer
 %% sha1: 160-bit
