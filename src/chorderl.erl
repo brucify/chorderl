@@ -72,8 +72,9 @@ node_status() ->
 
 demo(N) ->
   chorderl_utils:demo(N).
+
 %%
-%% gen_server APIs
+%% gen_server casts (async)
 %%
 
 %% Set new Predecessor
@@ -96,10 +97,6 @@ cast_add(Pid, Key, Value, Qref, Client) ->
 cast_lookup(Pid, Key, Qref, Client) ->
   gen_server:cast(Pid, {lookup, Key, Qref, Client}).
 
-%%
-%% queries (async with async reply)
-%%
-
 %% Request NodeID
 cast_query_id(Pid, Qref, From) ->
   gen_server:cast(Pid, {query_id, Qref, From}).
@@ -111,28 +108,9 @@ cast_query_predecessor(Pid, From, Type) ->
   %lager:info("gen_server casting ~p", [lager:pr({Pid, From}, ?MODULE)]),
   gen_server:cast(Pid, {query_predecessor, From, Type}).
 
-%% Check who is Successor of Pid. NewNode needs to know
-call_query_successor(Pid) ->
-  gen_server:call(Pid, {query_successor}).
-
-cast_query_fingers(Pid, Qref, From) ->
-  gen_server:cast(Pid, {query_fingers, Qref, From}).
-
-%%
-%% find (async with async reply)
-%%
-
-% Request Successor of From
-call_find_successor(Pid, {NodeID, From}) ->
-  gen_server:call(Pid, {find_successor, {NodeID, From}}).
-
 % Request Predecessor of From
 cast_find_predecessor(Pid, Qref, {NodeID, From}) ->
   gen_server:cast(Pid, {find_predecessor, Qref, {NodeID, From}}).
-
-%%
-%% replies (async)
-%%
 
 %% Send to Pid current Predecessor
 cast_send_predecessor(Pid, Pred, Type) ->
@@ -141,3 +119,18 @@ cast_send_predecessor(Pid, Pred, Type) ->
 % Send to Pid current Predecessor
 cast_send_successor(Pid, Succ) ->
   gen_server:cast(Pid, {status_successor, Succ}).
+
+cast_query_fingers(Pid, Qref, From) ->
+  gen_server:cast(Pid, {query_fingers, Qref, From}).
+
+%%
+%% gen_server calls (sync)
+%%
+
+% Request Successor of From
+call_find_successor(Pid, {NodeID, From}) ->
+  gen_server:call(Pid, {find_successor, {NodeID, From}}).
+
+%% Check who is Successor of Pid. NewNode needs to know
+call_query_successor(Pid) ->
+  gen_server:call(Pid, {query_successor}).
