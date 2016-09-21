@@ -10,9 +10,12 @@
 
 -include("chorderl.hrl").
 
+-compile([{parse_transform, lager_transform}]).
+
+
 %% API
--export([init_finger_table/2, notify/3, fix_fingers/3]).
--export([find_successor/4, find_predecessor/4, update_successor/3]).
+-export([init_finger_table/2, notify/3, fix_fingers/2]).
+-export([find_successor/3, update_successor/3, fetch_successor/1]).
 
 -export([get_finger_start/3]).
 
@@ -114,11 +117,11 @@ fill_finger_table_with_self(NodeID, List, I) ->
 %%              end,
 %%  fill_finger_table(NodeID, List ++ [Finger1], I + 1, End).
 
-fix_fingers(NodeID, Successor, FingerTableList) ->
+fix_fingers(NodeID, FingerTableList) ->
   Index = random:uniform(?M),
   { StartID, OldFinger } = lists:nth(Index, FingerTableList),
   %%Result = chorderl:call_find_successor(self(), Qref, { StartID, self()} ),
-  Result = find_successor({ StartID, self()}, NodeID, Successor, FingerTableList),
+  Result = find_successor({ StartID, self()}, NodeID, FingerTableList),
   NewFinger = { StartID, Result },
   if
     Result /= OldFinger ->
@@ -137,17 +140,19 @@ fix_fingers(NodeID, Successor, FingerTableList) ->
 %%      io:format("~p: (fix_fingers) Time out: no response~n",[self()]),
 %%      {error, timeout}
 %%    end,
-  NewFingerTableList = lists:keyreplace( StartID, 1, FingerTableList, NewFinger ),
+  NewFingerTableList = lists:sublist(FingerTableList, Index-1) ++ [ NewFinger | lists:nthtail(Index, FingerTableList)],
+  %%NewFingerTableList = lists:keyreplace( StartID, 1, FingerTableList, NewFinger ),
   NewFingerTableList.
 
 %% todo query_successor (reply at once) vs. find_successor (continue to find on other nodes? disrupt)?
-find_successor({NewNodeID, From}, NodeID, Successor, FingerTableList) ->
-  Result = find_predecessor(NewNodeID, NodeID, Successor, FingerTableList), %% find Predecessor for NewNodeID from LoopData
+find_successor({NewNodeID, From}, NodeID, FingerTableList) ->
+  Result = find_predecessor(NewNodeID, NodeID, FingerTableList), %% find Predecessor for NewNodeID
   case Result of
     {NodeID, _Self} ->
+      Successor = fetch_successor(FingerTableList),
       Successor;
     {_PKey, Ppid} ->
-      chorderl:call_query_successor(Ppid);  %% Ask Ppid, reply to Pid
+      chorderl:call_query_successor(Ppid);  %% Ask Ppid
     nil ->
       %% From ! {Qref, {NodeID, self()}}
       {NodeID, self()}
@@ -159,17 +164,18 @@ find_successor({NewNodeID, From}, NodeID, Successor, FingerTableList) ->
 %%  while(id not belongsto (n', n'.successor])
 %%    n' = n'.closest_preceding_finger(id);
 %%  return n';
-find_predecessor(NewNodeID, NodeID, Successor, FingerTableList) ->
+find_predecessor(NewNodeID, NodeID, FingerTableList) ->
+  Successor = fetch_successor(FingerTableList),
   case Successor of
-    nil ->
-      {NodeID, self()};
-    {Skey, Spid} ->
+    {Skey, _Spid} ->
       case not(chorderl_utils:is_between(NewNodeID, NodeID, Skey) or (NewNodeID == Skey)) of %% (NodeID, Skey]
         true ->
-          {Skey, Spid};
+          closest_preceding_finger(NewNodeID, NodeID, FingerTableList, ?M); %% for i = m downto 1
         false ->
-          closest_preceding_finger(NewNodeID, NodeID, FingerTableList, ?M) %% for i = m downto 1
-      end
+          {NodeID, self()}
+      end;
+    _ ->
+      {NodeID, self()}
   end.
 
 %% return closest finger preceding NewNodeID
@@ -181,8 +187,7 @@ find_predecessor(NewNodeID, NodeID, Successor, FingerTableList) ->
 closest_preceding_finger(_NewNodeID, NodeID, _FingerTableList, 1) ->
   {NodeID, self()};
 closest_preceding_finger(NewNodeID, NodeID, FingerTableList, Index) ->
-  Finger = lists:nth(Index, FingerTableList),
-  { _StartID, {Fkey, Fpid} } = Finger,
+  { _StartID, {Fkey, Fpid} }  = lists:nth(Index, FingerTableList),
   case chorderl_utils:is_between(Fkey, NodeID, NewNodeID) of
     true ->
       {Fkey, Fpid};
@@ -258,5 +263,6 @@ get_finger_start(NodeID, I, M) ->
 get_finger_interval(NodeID, I, M) ->
   {get_finger_start(NodeID, I, M), get_finger_start(NodeID, I+1, M)}.
 
-get_successor(LoopData) ->
-  todo.
+fetch_successor(FingerTableList) ->
+  {_StartID, Successor } = lists:nth( 1, FingerTableList ),
+  Successor.
