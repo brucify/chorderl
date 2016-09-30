@@ -18,7 +18,8 @@
 -export([cast_query_id/3, cast_query_predecessor/3, call_query_successor/1, cast_query_fingers/3]).
 -export([cast_send_successor/2, cast_send_predecessor/3, call_find_successor/2]).
 
--export([registered/0, stabilize_all/0, node_status/0, fix_fingers_all/0, demo/1]).
+-export([registered/0, stabilize_all/0, stabilize_all/1, node_status/0, fix_fingers_all/0, fix_fingers_all/1, demo/1]).
+
 
 %% Exported Client Functions
 %% Operation & Maintenance API
@@ -40,8 +41,8 @@ join(Key, Peer) ->
     case ?M of
       160 ->
         chorderl_utils:generate_node_id(Key);
-      8 -> %% 0-255
-        chorderl_utils:generate_node_id_8_bits(Key)
+      3 -> %% 0-255
+        chorderl_utils:generate_node_id_3_bits(Key)
     end,
   %%Module = atom_to_binary(?MODULE, latin1),
   %%ProcName = binary_to_atom(<<Module/binary, "_", NodeID/integer>>, latin1), % e.g. 'chorderl_ì%KÅ\205\021Î¿#}qÆ\034\016ìâ´quX'
@@ -61,11 +62,17 @@ stop(NodeID) ->
 fix_fingers_all() ->
   chorderl_utils:fix_fingers_all().
 
+fix_fingers_all(N) ->
+  chorderl_utils:fix_fingers_all(N).
+
 registered() ->
   chorderl_utils:registered().
 
 stabilize_all() ->
   chorderl_utils:stabilize_all().
+
+stabilize_all(N) ->
+  chorderl_utils:stabilize_all(N).
 
 node_status() ->
   chorderl_utils:node_status().

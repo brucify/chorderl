@@ -22,7 +22,7 @@
 
 -export([demo/0, demo/1]).
 
--export([generate_node_id_8_bits/1]).
+-export([generate_node_id_3_bits/1]).
 
 %% Check if KeyX is between Key1 and Key2
 %is_between(KeyX, Key1, Key2) when (Key1 < KeyX) and (KeyX < Key2) ->
@@ -35,12 +35,12 @@
 %  %io:format("chorderl_utils: comparing Nkey: ~p, Pkey ~p and NodeID: ~p~n",[KeyX, Key1, Key2]),
 %  false.
 
-is_between(X, A, B) when X >= ?M ->
+is_between(X, A, B) when X >= ?RING_SIZE ->
   is_between(X rem ?M, A, B);
 is_between(X, A, B) when B > A ->
   B > X andalso X > A;
 is_between(X, A, B) when A > B ->
-  not (B > X andalso X > A);
+  not (A > X andalso B > A);
 is_between(X, A, B) when A == B ->
   true.
 
@@ -73,7 +73,7 @@ generate_node_id(Key) ->
   NodeID = crypto:hash(sha, Key),
   binary:decode_unsigned(NodeID, big).
 
-generate_node_id_8_bits(Key) ->
+generate_node_id_3_bits(Key) ->
   Key.
 
 %% List processes starting with "chorderl..." in erlang:registered()
@@ -118,8 +118,8 @@ ip_to_proc_name(IP) ->
     case ?M of
       160 ->
         chorderl_utils:generate_node_id(IP);
-      8 -> %% 0-255
-        chorderl_utils:generate_node_id_8_bits(IP)
+      3 -> %% 0-255
+        chorderl_utils:generate_node_id_3_bits(IP)
     end,
   ProcName = node_id_to_proc_name(NodeID),
   ProcName.
@@ -190,14 +190,14 @@ stabilize_all() ->
     chorderl_utils:registered()
   ).
 
+stabilize_all(N) ->
+  lists:map(fun(_) -> chorderl:stabilize_all() end, lists:seq(1, N)).
+
 fix_fingers_all() ->
   lists:map(
     fun(A)-> chorderl:cast_fix_fingers(A) end,
     chorderl_utils:registered()
   ).
-
-stabilize_all(N) ->
-  lists:map(fun(_) -> chorderl_utils:stabilize_all() end, lists:seq(1, N)).
 
 fix_fingers_all(N) ->
   lists:map(fun(_) -> chorderl_utils:fix_fingers_all() end, lists:seq(1, N)).
@@ -297,8 +297,8 @@ demo(N) ->
   case ?M of
     160 ->
       demo(N, 1);
-    8 ->
-      demo_8_bits(N, 0)
+    3 ->
+      demo_3_bits(N, 0)
   end.
 
 demo(1, 1) ->
@@ -314,16 +314,16 @@ demo(N, X) ->
   chorderl:join(IP, chorderl_utils:ip_to_proc_name(<<"127.0.0.1">>)),
   demo(N, X+1).
 
-demo_8_bits(1, 0) ->
+demo_3_bits(1, 0) ->
   chorderl:join(0);
-demo_8_bits(N, 0) ->
+demo_3_bits(N, 0) ->
   chorderl:join(0),
-  demo_8_bits(N, 1);
-demo_8_bits(N, X) when X == N-1 ->
+  demo_3_bits(N, 1);
+demo_3_bits(N, X) when X == N-1 ->
   chorderl:join(X, chorderl_utils:ip_to_proc_name(0));
-demo_8_bits(N, X) ->
+demo_3_bits(N, X) ->
   chorderl:join(X, chorderl_utils:ip_to_proc_name(0)),
-  demo_8_bits(N, X+1).
+  demo_3_bits(N, X+1).
 
 demo() ->
     chorderl:join(<<"127.0.0.1">>),
