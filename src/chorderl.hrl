@@ -9,7 +9,8 @@
 
 -define(Timeout, 1000).
 %%-define(M, 160).
--define(M, 8).
+-define(M, 3).
+-define(RING_SIZE, 8).
 
 -define(KEY_NODE_ID, node_id).
 -define(KEY_PREDECESSOR, predecessor).

@@ -10,9 +10,12 @@
 
 -include("chorderl.hrl").
 
+-compile([{parse_transform, lager_transform}]).
+
+
 %% API
--export([init_finger_table/2, notify/3, fix_fingers/3]).
--export([find_successor/4, find_predecessor/4, update_successor/3]).
+-export([init_finger_table/2, notify/3, fix_fingers/2]).
+-export([find_successor/3, update_successor/3, fetch_successor/1]).
 
 -export([get_finger_start/3]).
 
@@ -26,13 +29,13 @@
 %% Node N (NodeID) learns its predecessor and fingers by asking￼N' (PeerPid) to look them up
 init_finger_table(NodeID, nil) ->
   io:format("~p: (init_finger_table) First node. Setting all fingers to ourself...~n", [self()]),
-  FingerTableList = fill_finger_table_with_self(NodeID, []),
+  FingerTableList = fill_finger_table_with_self(NodeID),
   FingerTableList;
 init_finger_table(NodeID, PeerPid) ->
   io:format("~p: (init_finger_table) Finding successor...~n", [self()]),
   StartID = get_finger_start(NodeID, 1, ?M), % N.finger[1].start
   Result = chorderl:call_find_successor(PeerPid, {StartID, self()}),
-  Finger = { StartID, Result },
+  FirstFinger = { StartID, Result },
 %%  chorderl:cast_find_successor(PeerPid, Qref, {StartID, self()}),
 %%  Finger =
 %%    receive {Qref, {Skey, Spid}} ->
@@ -44,14 +47,17 @@ init_finger_table(NodeID, PeerPid) ->
 %%      io:format("~p: (init_finger_table) Time out: no response~n",[self()]),
 %%      {error, timeout}
 %%    end,
-  FingerTableList = fill_finger_table(NodeID, PeerPid, [Finger], 1, ?M), %% from i = 1 to m - 1
+  FingerTableList = fill_finger_table(NodeID, PeerPid, [FirstFinger]),
   FingerTableList.
 
-fill_finger_table(NodeID, PeerPid, FingerTableList, End, End) ->
+fill_finger_table(NodeID, PeerPid, FingerTableList) ->
+  fill_finger_table(NodeID, PeerPid, FingerTableList, 1). %% from i = 1 to m - 1
+
+fill_finger_table(_NodeID, _PeerPid, FingerTableList, ?M) ->
   FingerTableList;
-fill_finger_table(NodeID, PeerPid, FingerTableList, Index, End) ->
-  { _StartID, {Fkey, Fpid} } = lists:nth(Index, FingerTableList), % N.finger[i].node
+fill_finger_table(NodeID, PeerPid, FingerTableList, Index) ->
   NextStartID = get_finger_start(NodeID, Index+1, ?M), % N.finger[i+1].start
+  { _StartID, {Fkey, Fpid} } = lists:nth(Index, FingerTableList), % N.finger[i].node
   NextFinger =
     case ( chorderl_utils:is_between(NextStartID, NodeID, Fkey) or (NextStartID == NodeID) ) of
        true ->
@@ -72,10 +78,10 @@ fill_finger_table(NodeID, PeerPid, FingerTableList, Index, End) ->
 %%           {error, timeout}
 %%         end
       end,
-  fill_finger_table(NodeID, PeerPid, FingerTableList ++ [NextFinger], Index+1, End).
+  fill_finger_table(NodeID, PeerPid, FingerTableList ++ [NextFinger], Index+1).
 
-fill_finger_table_with_self(NodeID, List) ->
-  fill_finger_table_with_self(NodeID, List, 1).
+fill_finger_table_with_self(NodeID) ->
+  fill_finger_table_with_self(NodeID, [], 1).
 
 fill_finger_table_with_self(_NodeID, List, ?M+1) ->
   List;
@@ -114,15 +120,16 @@ fill_finger_table_with_self(NodeID, List, I) ->
 %%              end,
 %%  fill_finger_table(NodeID, List ++ [Finger1], I + 1, End).
 
-fix_fingers(NodeID, Successor, FingerTableList) ->
+fix_fingers(NodeID, FingerTableList) ->
   Index = random:uniform(?M),
+  io:format("~p: (fix_fingers) Fixing index: ~p ~n", [self(), Index]),
   { StartID, OldFinger } = lists:nth(Index, FingerTableList),
   %%Result = chorderl:call_find_successor(self(), Qref, { StartID, self()} ),
-  Result = find_successor({ StartID, self()}, NodeID, Successor, FingerTableList),
+  Result = find_successor({ StartID, self()}, NodeID, FingerTableList),
   NewFinger = { StartID, Result },
   if
     Result /= OldFinger ->
-      io:format("~p: (fix_fingers) Finger change: ~p -> ~p~n", [self(), chorderl_utils:display_node(OldFinger), chorderl_utils:display_node(Result)]);
+      io:format("~p: (fix_fingers) Finger change: (Start ~p) ~p -> ~p~n", [self(), StartID, chorderl_utils:display_node(OldFinger), chorderl_utils:display_node(Result)]);
     true -> ok
   end,
 %%  chorderl:cast_find_successor(chorderl_utils:node_id_to_proc_name(NodeID), Qref, { StartID, self()} ),
@@ -137,17 +144,20 @@ fix_fingers(NodeID, Successor, FingerTableList) ->
 %%      io:format("~p: (fix_fingers) Time out: no response~n",[self()]),
 %%      {error, timeout}
 %%    end,
-  NewFingerTableList = lists:keyreplace( StartID, 1, FingerTableList, NewFinger ),
+  NewFingerTableList = lists:sublist(FingerTableList, Index-1) ++ [ NewFinger | lists:nthtail(Index, FingerTableList)],
+  %%NewFingerTableList = lists:keyreplace( StartID, 1, FingerTableList, NewFinger ),
   NewFingerTableList.
 
 %% todo query_successor (reply at once) vs. find_successor (continue to find on other nodes? disrupt)?
-find_successor({NewNodeID, From}, NodeID, Successor, FingerTableList) ->
-  Result = find_predecessor(NewNodeID, NodeID, Successor, FingerTableList), %% find Predecessor for NewNodeID from LoopData
+find_successor({NewNodeID, From}, NodeID, FingerTableList) ->
+  Result = find_predecessor(NewNodeID, NodeID, FingerTableList), %% find Predecessor for NewNodeID
   case Result of
     {NodeID, _Self} ->
+      Successor = fetch_successor(FingerTableList),
       Successor;
     {_PKey, Ppid} ->
-      chorderl:call_query_successor(Ppid);  %% Ask Ppid, reply to Pid
+      io:format("~p: (find_successor) Predecessor found: ~p ~n", [self(), chorderl_utils:display_node(Result)]),
+      chorderl:call_query_successor(Ppid);  %% Ask Ppid
     nil ->
       %% From ! {Qref, {NodeID, self()}}
       {NodeID, self()}
@@ -159,18 +169,23 @@ find_successor({NewNodeID, From}, NodeID, Successor, FingerTableList) ->
 %%  while(id not belongsto (n', n'.successor])
 %%    n' = n'.closest_preceding_finger(id);
 %%  return n';
-find_predecessor(NewNodeID, NodeID, Successor, FingerTableList) ->
+find_predecessor(NewNodeID, NodeID, FingerTableList) ->
+  Successor = fetch_successor(FingerTableList),
   case Successor of
-    nil ->
-      {NodeID, self()};
-    {Skey, Spid} ->
+    {Skey, _Spid} ->
       case not(chorderl_utils:is_between(NewNodeID, NodeID, Skey) or (NewNodeID == Skey)) of %% (NodeID, Skey]
         true ->
-          {Skey, Spid};
+          Result = closest_preceding_finger(NewNodeID, NodeID, FingerTableList), %% for i = m downto 1
+          Result; %% todo evalue id not belongsto (n', n'.successor] again
         false ->
-          closest_preceding_finger(NewNodeID, NodeID, FingerTableList, ?M) %% for i = m downto 1
-      end
+          {NodeID, self()}
+      end;
+    _ ->
+      {NodeID, self()}
   end.
+
+closest_preceding_finger(NewNodeID, NodeID, FingerTableList) ->
+  closest_preceding_finger(NewNodeID, NodeID, FingerTableList, ?M).
 
 %% return closest finger preceding NewNodeID
 %% n.closest_preceding_finger(id)
@@ -178,11 +193,10 @@ find_predecessor(NewNodeID, NodeID, Successor, FingerTableList) ->
 %%     if(finger[i].node belongsto (n, id) )
 %%       return finger[i].node;
 %%   return n;
-closest_preceding_finger(_NewNodeID, NodeID, _FingerTableList, 1) ->
+closest_preceding_finger(_NewNodeID, NodeID, _FingerTableList, 0) ->
   {NodeID, self()};
 closest_preceding_finger(NewNodeID, NodeID, FingerTableList, Index) ->
-  Finger = lists:nth(Index, FingerTableList),
-  { _StartID, {Fkey, Fpid} } = Finger,
+  { _StartID, {Fkey, Fpid} }  = lists:nth(Index, FingerTableList),
   case chorderl_utils:is_between(Fkey, NodeID, NewNodeID) of
     true ->
       {Fkey, Fpid};
@@ -258,5 +272,6 @@ get_finger_start(NodeID, I, M) ->
 get_finger_interval(NodeID, I, M) ->
   {get_finger_start(NodeID, I, M), get_finger_start(NodeID, I+1, M)}.
 
-get_successor(LoopData) ->
-  todo.
+fetch_successor(FingerTableList) ->
+  {_StartID, Successor } = lists:nth( 1, FingerTableList ),
+  Successor.
