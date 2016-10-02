@@ -40,7 +40,7 @@ is_between(X, A, B) when X >= ?RING_SIZE ->
 is_between(X, A, B) when B > A ->
   B > X andalso X > A;
 is_between(X, A, B) when A > B ->
-  not (A > X andalso B > A);
+  not (A >= X andalso X >= B);
 is_between(X, A, B) when A == B ->
   true.
 
@@ -147,18 +147,18 @@ node_status() ->
 %      io:format(" ======~p=====~n", [whereis(ProcName)]),
 %      io:format("~n~n"),
 
-      io:format(" ===================== ~p =====================~n", [whereis(ProcName)]),
+      io:format(" ===================== ~p ======================~n", [{NodeID, whereis(ProcName)}]),
       io:format("|  name: ~p~n", [ProcName]),
       io:format("|  id: ~p~n", [NodeID]),
-      io:format("|                                                     |~n"),
+      io:format("|                                                          |~n"),
       io:format("|  Pred: ~p --->~n", [Pred]),
-      io:format("|                      ~p~n", [whereis(ProcName)]),
+      io:format("|                      ~p~n", [{NodeID, whereis(ProcName)}]),
       io:format("|                                 ---> Succ: ~p ~n", [Succ]),
-      io:format("|  Last 8 Fingers:                                    |~n"),
+      io:format("|  Last 8 Fingers:                                         |~n"),
       print_fingers_x(lists:reverse(Fingers), 8, 0),
       io:format("|  Total: ~p~n", [length(Fingers)]),
-      io:format("|                                                     |~n"),
-      io:format(" ====================================================~n"),
+      io:format("|                                                          |~n"),
+      io:format(" ==========================================================~n"),
       io:format("~n~n")
 
 %      io:format("=====~p, ~p=====~n", [ProcName, whereis(ProcName)]),
@@ -217,13 +217,7 @@ cast_query_predecessor(ProcName) ->
   chorderl:cast_query_predecessor(ProcName, self(), none),
   receive
     {'$gen_cast', {status_predecessor, Pred, none}} ->
-      case Pred of
-        {PredBin, PredPid} ->
-          %{binary_to_atom(<<PredBin/binary>>, latin1), PredPid};
-          PredPid;
-        nil ->
-          nil
-      end
+      Pred
   after 1000 ->
     io:format("Time out: no response~n",[]),
     {error, timeout}
@@ -231,13 +225,7 @@ cast_query_predecessor(ProcName) ->
 
 call_query_successor(ProcName) ->
   Result = chorderl:call_query_successor(ProcName),
-  case Result of
-    {_SuccBin, SuccPid} ->
-      %{binary_to_atom(<<SuccBin/binary>>, latin1), SuccPid};
-      SuccPid;
-    nil ->
-      nil
-  end.
+  Result.
 %%  chorderl:cast_query_successor(ProcName, Qref, self()),
 %%  receive
 %%    {Qref, Succ} ->

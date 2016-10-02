@@ -16,8 +16,10 @@
 %% API
 -export([init_finger_table/2, notify/3, fix_fingers/2]).
 -export([find_successor/3, update_successor/3, fetch_successor/1]).
-
+-export([closest_preceding_finger/3]).
 -export([get_finger_start/3]).
+-export([the_condition/3]).
+
 
 %% FingerTableList =  [
 %%    {Start, Successor},
@@ -122,14 +124,14 @@ fill_finger_table_with_self(NodeID, List, I) ->
 
 fix_fingers(NodeID, FingerTableList) ->
   Index = random:uniform(?M),
-  io:format("~p: (fix_fingers) Fixing index: ~p ~n", [self(), Index]),
   { StartID, OldFinger } = lists:nth(Index, FingerTableList),
+  io:format("~p: (fix_fingers) Fixing index ~p: ~p ~n", [self(), Index, { StartID, OldFinger }]),
   %%Result = chorderl:call_find_successor(self(), Qref, { StartID, self()} ),
   Result = find_successor({ StartID, self()}, NodeID, FingerTableList),
   NewFinger = { StartID, Result },
   if
     Result /= OldFinger ->
-      io:format("~p: (fix_fingers) Finger change: (Start ~p) ~p -> ~p~n", [self(), StartID, chorderl_utils:display_node(OldFinger), chorderl_utils:display_node(Result)]);
+      io:format("~p: (fix_fingers) Finger change: {~p, ~p -> ~p}~n", [self(), StartID, chorderl_utils:display_node(OldFinger), chorderl_utils:display_node(Result)]);
     true -> ok
   end,
 %%  chorderl:cast_find_successor(chorderl_utils:node_id_to_proc_name(NodeID), Qref, { StartID, self()} ),
@@ -150,16 +152,22 @@ fix_fingers(NodeID, FingerTableList) ->
 
 %% todo query_successor (reply at once) vs. find_successor (continue to find on other nodes? disrupt)?
 find_successor({NewNodeID, From}, NodeID, FingerTableList) ->
-  Result = find_predecessor(NewNodeID, NodeID, FingerTableList), %% find Predecessor for NewNodeID
-  case Result of
+  PredResult = find_predecessor(NewNodeID, NodeID, FingerTableList), %% find Predecessor for NewNodeID
+  case PredResult of
     {NodeID, _Self} ->
-      Successor = fetch_successor(FingerTableList),
-      Successor;
+      io:format("~p: (find_successor 1) Predecessor found: ~p ---> ~p ~n", [self(), PredResult, NewNodeID]),
+      Result1 = fetch_successor(FingerTableList),
+      io:format("~p: (find_successor 1) Successor found: ~p ---> ~p ~n", [self(), NewNodeID, Result1]),
+      Result1;
     {_PKey, Ppid} ->
-      io:format("~p: (find_successor) Predecessor found: ~p ~n", [self(), chorderl_utils:display_node(Result)]),
-      chorderl:call_query_successor(Ppid);  %% Ask Ppid
+      io:format("~p: (find_successor 2) Predecessor found: ~p ---> ~p ~n", [self(), PredResult, NewNodeID]),
+      Result2 = chorderl:call_query_successor(Ppid),
+      io:format("~p: (find_successor 2) Successor found: ~p ---> ~p ~n", [self(), NewNodeID, Result2]),
+      Result2;  %% Ask Ppid
     nil ->
+      io:format("~p: (find_successor 3) Predecessor found: ~p ---> ~p ~n", [self(), PredResult, NewNodeID]),
       %% From ! {Qref, {NodeID, self()}}
+      io:format("~p: (find_successor 3) Successor found: ~p ---> ~p ~n", [self(), NewNodeID, {NodeID, self()}]),
       {NodeID, self()}
   end.
 
@@ -170,19 +178,38 @@ find_successor({NewNodeID, From}, NodeID, FingerTableList) ->
 %%    n' = n'.closest_preceding_finger(id);
 %%  return n';
 find_predecessor(NewNodeID, NodeID, FingerTableList) ->
-  Successor = fetch_successor(FingerTableList),
-  case Successor of
-    {Skey, _Spid} ->
-      case not(chorderl_utils:is_between(NewNodeID, NodeID, Skey) or (NewNodeID == Skey)) of %% (NodeID, Skey]
-        true ->
-          Result = closest_preceding_finger(NewNodeID, NodeID, FingerTableList), %% for i = m downto 1
-          Result; %% todo evalue id not belongsto (n', n'.successor] again
-        false ->
-          {NodeID, self()}
-      end;
-    _ ->
-      {NodeID, self()}
+  Result = find_predecessor_local(NewNodeID, NodeID, FingerTableList),
+  case Result of
+    {ok, Pred} ->
+      Pred;
+    {continue, Finger} ->
+      find_predecessor_remote(NewNodeID, Finger)
   end.
+
+find_predecessor_local(NewNodeID, NodeID, FingerTableList) ->
+  io:format("~p: (find_predecessor) Finding predecessor of ~p locally~n", [self(), NewNodeID]),
+  {Skey, _Spid} = fetch_successor(FingerTableList),
+  case the_condition(NewNodeID, NodeID, Skey) of
+    true ->
+      {Fkey, Fpid} = closest_preceding_finger(NewNodeID, NodeID, FingerTableList),
+      {continue, {Fkey, Fpid}};     %%  evalue id not belongsto (n', n'.successor] again
+    false ->
+      {ok, {NodeID, self()}}
+  end.
+
+find_predecessor_remote(NewNodeID, {Nkey, Npid}) ->
+  io:format("~p: (find_predecessor_remote) Finding predecessor of ~p remotely at ~p~n", [self(), NewNodeID, {Nkey, Npid}]),
+  {Skey, _Spid} = chorderl:call_query_successor(Npid),  %% Ask Ppid
+  case the_condition(NewNodeID, Nkey, Skey) of
+    true ->
+      {Fkey, Fpid} = chorderl:call_closest_preceding_finger(Npid, NewNodeID),
+      find_predecessor_remote(NewNodeID, {Fkey, Fpid}); %% recursive RPC call
+    false ->
+      {Nkey, Npid}
+  end.
+
+the_condition(NewNodeID, NodeID, Skey) ->
+  not(chorderl_utils:is_between(NewNodeID, NodeID, Skey) or (NewNodeID == Skey)). %% (NodeID, Skey]
 
 closest_preceding_finger(NewNodeID, NodeID, FingerTableList) ->
   closest_preceding_finger(NewNodeID, NodeID, FingerTableList, ?M).
@@ -273,5 +300,5 @@ get_finger_interval(NodeID, I, M) ->
   {get_finger_start(NodeID, I, M), get_finger_start(NodeID, I+1, M)}.
 
 fetch_successor(FingerTableList) ->
-  {_StartID, Successor } = lists:nth( 1, FingerTableList ),
+  { _StartID, Successor } = lists:nth( 1, FingerTableList ),
   Successor.

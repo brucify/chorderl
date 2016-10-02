@@ -42,11 +42,19 @@ init([NodeID, PeerPid]) ->
 terminate(_Reason, _LoopData) ->
   ok.
 
+% NewNode needs to know our Successor
+handle_call({query_closest_preceding_finger, NewNodeID}, _From, LoopData) ->
+  NodeID = maps:get(?KEY_NODE_ID, LoopData),
+  FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
+  Finger = chorderl_fintab:closest_preceding_finger(NewNodeID, NodeID, FingerTableList),
+  io:format("~p: (query_closest_preceding_finger) Closest predecing finger of ~p is: ~p ~n", [self(), NewNodeID, Finger]),
+  {reply, Finger, LoopData};
 
 % NewNode needs to know our Successor
 handle_call({query_successor}, _From, LoopData) ->
   FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
   Successor = chorderl_fintab:fetch_successor(FingerTableList),
+  io:format("~p: (query_successor) Successor is: ~p ~n", [self(), Successor]),
   {reply, Successor, LoopData};
 
 % NewNode wants to know who its Successor is
