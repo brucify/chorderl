@@ -17,7 +17,7 @@
 -export([cast_add/5, cast_notify/2, cast_stabilize/1, cast_lookup/4, cast_fix_fingers/1]).
 -export([cast_query_id/3, cast_query_predecessor/3, call_query_successor/1, cast_query_fingers/3]).
 -export([cast_send_successor/2, cast_send_predecessor/3, call_find_successor/2]).
-
+-export([call_closest_preceding_finger/2]).
 -export([registered/0, stabilize_all/0, stabilize_all/1, node_status/0, fix_fingers_all/0, fix_fingers_all/1, demo/1]).
 
 
@@ -141,3 +141,6 @@ call_find_successor(Pid, {NodeID, From}) ->
 %% Check who is Successor of Pid. NewNode needs to know
 call_query_successor(Pid) ->
   gen_server:call(Pid, {query_successor}).
+
+call_closest_preceding_finger(Pid, NewNodeID) ->
+  gen_server:call(Pid, {query_closest_preceding_finger, NewNodeID}).
