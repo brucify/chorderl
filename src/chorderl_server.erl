@@ -62,7 +62,7 @@ handle_call({query_successor}, _From, LoopData) ->
 handle_call({find_successor, NewNode}, _From, LoopData) ->
   NodeID = maps:get(?KEY_NODE_ID, LoopData),
   FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
-  Reply = chorderl_fintab:find_successor(NewNode, NodeID, FingerTableList),
+  {ok, Reply} = chorderl_fintab:find_successor(NewNode, NodeID, FingerTableList, node_join),
   {reply, Reply, LoopData}.
 
 handle_cast(stop, LoopData) ->
@@ -84,6 +84,14 @@ handle_cast({notify, New}, LoopData) ->
 handle_cast({query_id, Qref, From}, LoopData) ->
   NodeID = maps:get(?KEY_NODE_ID, LoopData),
   From ! {Qref, NodeID},
+  {noreply, LoopData};
+
+%%todo implement answer
+handle_cast({query_successor, From, Data}, LoopData) ->
+  FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
+  Successor = chorderl_fintab:fetch_successor(FingerTableList),
+  io:format("~p: (query_successor) Successor is: ~p ~n", [self(), Successor]),
+  chorderl:cast_send_successor(From, Successor, Data),
   {noreply, LoopData};
 
 % Peer needs to know our Predecessor
@@ -146,9 +154,60 @@ handle_cast({status_predecessor, Pred, stabilize}, LoopData) ->
   {noreply, LoopData#{?KEY_FINGER_TABLE := NewFingerTableList}};
 
 % We are informed that our successor is Succ
-handle_cast({status_successor, Successor}, LoopData) ->
+handle_cast({status_successor, Successor, {{fix_fingers, find_successor}, StartID, Index}}, LoopData) ->
   FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
-  NewFingerTableList = [ Successor | lists:nthtail( 1, FingerTableList) ], %% replace the 1st element
+  { StartID, OldFinger } = lists:nth(Index, FingerTableList),
+  NewFinger = { StartID, Successor },
+  if
+    Successor /= OldFinger ->
+      io:format("~p: (fix_fingers) Finger change: {~p, ~p -> ~p}~n", [self(), StartID, chorderl_utils:display_node(OldFinger), chorderl_utils:display_node(Successor)]);
+    true -> ok
+  end,
+%%  chorderl:cast_find_successor(chorderl_utils:node_id_to_proc_name(NodeID), Qref, { StartID, self()} ),
+%%  NewFinger =
+%%    receive
+%%      {Qref, {Skey, Spid}} ->
+%%        io:format("~p: (fix_fingers) Found finger: ~p~n", [self(), Spid]),
+%%        %%io:format("~p: (init_finger_table) Found successor: ~p. Checking its predecessor...~n", [self(), Spid]),
+%%        %%chorderl:cast_query_predecessor(Spid, self(), init_finger_table),
+%%        { StartID, {Skey, Spid} }
+%%    after ?Timeout ->
+%%      io:format("~p: (fix_fingers) Time out: no response~n",[self()]),
+%%      {error, timeout}
+%%    end,
+  NewFingerTableList = lists:sublist(FingerTableList, Index-1) ++ [ NewFinger | lists:nthtail(Index, FingerTableList)],
+  %%NewFingerTableList = lists:keyreplace( StartID, 1, FingerTableList, NewFinger ),
+  {noreply, LoopData#{?KEY_FINGER_TABLE := NewFingerTableList}};
+handle_cast({status_successor, Successor, {{fix_fingers, find_predecessor_remote, NewNodeID, {Nkey, Npid}}, StartID, Index}}, LoopData) ->
+  case chorderl_fintab:find_predecessor_remote_continued(NewNodeID, {Nkey, Npid}, Successor) of
+    {later, NewNodeID} ->
+      ok;
+    {Nkey, Npid}
+  end, %%% todo ??????????????????
+
+  FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
+  { StartID, OldFinger } = lists:nth(Index, FingerTableList),
+  NewFinger = { StartID, Successor },
+  if
+    Successor /= OldFinger ->
+      io:format("~p: (fix_fingers) Finger change: {~p, ~p -> ~p}~n", [self(), StartID, chorderl_utils:display_node(OldFinger), chorderl_utils:display_node(Successor)]);
+    true -> ok
+  end,
+  NewFingerTableList = lists:sublist(FingerTableList, Index-1) ++ [ NewFinger | lists:nthtail(Index, FingerTableList)],
+  {noreply, LoopData#{?KEY_FINGER_TABLE := NewFingerTableList}};
+
+handle_cast({status_closest_preceding_finger, NewNodeID, Finger}, LoopData) ->
+  chorderl_fintab:find_predecessor_remote_continued_2(NewNodeID, Finger),
+
+  FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
+  { StartID, OldFinger } = lists:nth(Index, FingerTableList),
+  NewFinger = { StartID, Successor },
+  if
+  Successor /= OldFinger ->
+  io:format("~p: (fix_fingers) Finger change: {~p, ~p -> ~p}~n", [self(), StartID, chorderl_utils:display_node(OldFinger), chorderl_utils:display_node(Successor)]);
+  true -> ok
+  end,
+  NewFingerTableList = lists:sublist(FingerTableList, Index-1) ++ [ NewFinger | lists:nthtail(Index, FingerTableList)],
   {noreply, LoopData#{?KEY_FINGER_TABLE := NewFingerTableList}};
 
 %% A node will take care of all the keys it is responsible for. If not responsible, forward it to our Successor
@@ -171,6 +230,16 @@ handle_cast({lookup, Key, Qref, Client}, LoopData) ->
   chorderl_store:lookup(Key, Qref, Client,
     NodeID, Predecessor, Successor, Store),
   {noreply, LoopData}; % todo change
+
+handle_cast({query_closest_preceding_finger, NewNodeID, From}, LoopData) ->
+  NodeID = maps:get(?KEY_NODE_ID, LoopData),
+  FingerTableList = maps:get(?KEY_FINGER_TABLE, LoopData),
+  Finger = chorderl_fintab:closest_preceding_finger(NewNodeID, NodeID, FingerTableList),
+  chorderl:cast_send_closest_preceding_finger(From, NewNodeID, Finger),
+  io:format("~p: (query_closest_preceding_finger) Closest predecing finger of ~p is: ~p ~n", [self(), NewNodeID, Finger]),
+  {noreply, LoopData};
+
+
 
 handle_cast(_, LoopData) ->
   {noreply, LoopData}.

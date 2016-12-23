@@ -16,10 +16,12 @@
 
 -export([cast_add/5, cast_notify/2, cast_stabilize/1, cast_lookup/4, cast_fix_fingers/1]).
 -export([cast_query_id/3, cast_query_predecessor/3, call_query_successor/1, cast_query_fingers/3]).
--export([cast_send_successor/2, cast_send_predecessor/3, call_find_successor/2]).
+-export([cast_send_successor/3, cast_send_predecessor/3, call_find_successor/2]).
 -export([call_closest_preceding_finger/2]).
 -export([registered/0, stabilize_all/0, stabilize_all/1, node_status/0, fix_fingers_all/0, fix_fingers_all/1, demo/1]).
-
+-export([cast_find_successor/2]).
+-export([cast_query_successor/3]).
+-export([cast_closest_preceding_finger/3]).
 
 %% Exported Client Functions
 %% Operation & Maintenance API
@@ -124,8 +126,11 @@ cast_send_predecessor(Pid, Pred, Type) ->
   gen_server:cast(Pid, {status_predecessor, Pred, Type}).
 
 % Send to Pid current Predecessor
-cast_send_successor(Pid, Succ) ->
-  gen_server:cast(Pid, {status_successor, Succ}).
+cast_send_successor(Pid, Succ, Data) ->
+  gen_server:cast(Pid, {status_successor, Succ, Data}).
+
+cast_send_closest_preceding_finger(Pid, NewNodeID, Finger) ->
+  gen_server:cast(Pid, {status_closest_preceding_finger, NewNodeID, Finger}).
 
 cast_query_fingers(Pid, Qref, From) ->
   gen_server:cast(Pid, {query_fingers, Qref, From}).
@@ -138,9 +143,19 @@ cast_query_fingers(Pid, Qref, From) ->
 call_find_successor(Pid, {NodeID, From}) ->
   gen_server:call(Pid, {find_successor, {NodeID, From}}).
 
+%% todo implement handle_cast
+cast_find_successor(Pid, {NodeID, From}) ->
+  gen_server:cast(Pid, {find_successor, {NodeID, From}}).
+
 %% Check who is Successor of Pid. NewNode needs to know
 call_query_successor(Pid) ->
   gen_server:call(Pid, {query_successor}).
 
+cast_query_successor(Pid, From, Data) ->
+  gen_server:cast(Pid, {query_successor, From, Data}).
+
 call_closest_preceding_finger(Pid, NewNodeID) ->
   gen_server:call(Pid, {query_closest_preceding_finger, NewNodeID}).
+
+cast_closest_preceding_finger(Pid, From, NewNodeID) ->
+  gen_server:cast(Pid, {query_closest_preceding_finger, NewNodeID, From}).
