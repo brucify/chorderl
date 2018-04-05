@@ -73,8 +73,14 @@ generate_node_id(Key) ->
   NodeID = crypto:hash(sha, Key),
   binary:decode_unsigned(NodeID, big).
 
-generate_node_id_3_bits(Key) ->
-  Key.
+generate_node_id_3_bits(random_id) ->
+  trunc(random:uniform() * 256);
+generate_node_id_3_bits(Key) when is_integer(Key) ->
+  Key;
+generate_node_id_3_bits(IPBin) when is_binary(IPBin) -> %% <<"127.0.0.1">> ---> 1
+  SubString = string:sub_string(binary_to_list(IPBin), 9),
+  list_to_integer(SubString).
+
 
 %% List processes starting with "chorderl..." in erlang:registered()
 registered() ->
@@ -89,6 +95,8 @@ registered() ->
   ).
 
 look_for_chorderl([], Res) ->
+  Res;
+look_for_chorderl([ "chorderl_sup" | _T], Res) ->
   Res;
 look_for_chorderl([ [99,104,111,114,100,101,114,108 | Rest] | T], Res) -> %matching "chorderl..."
   look_for_chorderl(T, [list_to_atom([99,104,111,114,100,101,114,108 | Rest]) | Res]);

@@ -9,7 +9,6 @@
 -module(chorderl).
 
 -include("chorderl.hrl").
--compile([{parse_transform, lager_transform}]).
 
 %% API
 -export([join/1, join/2, stop/1]).
@@ -47,7 +46,7 @@ join(Key, Peer) ->
   %%Module = atom_to_binary(?MODULE, latin1),
   %%ProcName = binary_to_atom(<<Module/binary, "_", NodeID/integer>>, latin1), % e.g. 'chorderl_ì%KÅ\205\021Î¿#}qÆ\034\016ìâ´quX'
   ProcName = chorderl_utils:node_id_to_proc_name(NodeID),
-  lager:info("ProcName: ~p", [ProcName]),
+  io:format("ProcName: ~p", [ProcName]),
 
   gen_server:start_link(
     {local, ProcName},
